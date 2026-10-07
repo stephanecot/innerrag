@@ -207,13 +207,19 @@ export default function AssistantView({ project }: { project: string }) {
 
   useEffect(() => () => abort.current?.abort(), []);
 
-  // Follow the answer while it is written, unless the reader scrolled up.
+  // Follow the answer while it is written, as long as the reader stays at the bottom: scrolling
+  // up stops following, coming back down resumes it.
+  const stick = useRef(true);
   useEffect(() => {
-    const el = endRef.current;
-    if (!el) return;
-    const near = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 240;
-    if (near || running) el.scrollIntoView({ block: "end" });
-  }, [conversation, running]);
+    const onScroll = () => {
+      stick.current = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => {
+    if (stick.current) endRef.current?.scrollIntoView({ block: "end" });
+  }, [conversation]);
 
   const update = (fn: (x: Exchange) => Exchange) =>
     setConversation((c) => ({ ...c, exchanges: [...c.exchanges.slice(0, -1), fn(c.exchanges[c.exchanges.length - 1])] }));
@@ -262,6 +268,7 @@ export default function AssistantView({ project }: { project: string }) {
     // plus submit) would pass it, the ref does not.
     if (!message || running || sending.current) return;
     sending.current = true;
+    stick.current = true;
     setDraft("");
     setConversation((c) => ({ ...c, at: Date.now(), exchanges: [...c.exchanges, { question: message, parts: [], status: "running", model: model || undefined, strict }] }));
     const ctrl = new AbortController();
