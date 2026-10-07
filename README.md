@@ -250,26 +250,35 @@ Searches and citations are recorded in the project folder's `feedback.jsonl`.
 claude mcp add --transport http innerrag http://localhost:8080/mcp/my-project
 ```
 
-## Assistant (local Claude Code, no API key)
+**GitHub Copilot CLI**: add the server to `~/.copilot/mcp-config.json` (or pass the same JSON once with `copilot --additional-mcp-config '…'`). The MCP page of the interface gives the line for the open project.
 
-The interface's Assistant page chats with the Claude Code on your computer, connected to the open project's MCP server. The server runs in Docker and cannot start that Claude Code, so a small dependency-free bridge on the host makes the link:
+```json
+{ "mcpServers": { "innerrag": { "type": "http", "url": "http://localhost:8080/mcp/my-project", "tools": ["*"] } } }
+```
+
+## Assistant (local Claude Code or GitHub Copilot CLI, no API key)
+
+The interface's Assistant page chats with a coding agent on your computer, connected to the open project's MCP server: **Claude Code** or **GitHub Copilot CLI**, whichever you pick in the page. The server runs in Docker and cannot start those agents, so a small dependency-free bridge on the host makes the link:
 
 ```bash
 python3 scripts/chat-bridge.py            # macOS, Linux
 py scripts\chat-bridge.py                # Windows
 ```
 
-- **What Claude can do**:
-  - each message starts `claude -p` with the innerrag MCP server only (`--strict-mcp-config`);
-  - built-in tools (terminal, files) are turned off;
-  - the ingestion tools are left out unless you pass `--allow-writes`.
-- **Account**: `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the environment, so Claude Code uses the account you are signed in with. Messages count towards that subscription.
+- **What the agent can do**: each message starts the agent with the innerrag MCP server as its only tools.
+  - Claude Code: `claude -p` with `--strict-mcp-config`, built-in tools (terminal, files) turned off.
+  - GitHub Copilot CLI: `copilot -p` with `--available-tools` limited to innerrag's tools, and its built-in GitHub MCP server turned off.
+  - The ingestion tools are left out unless you pass `--allow-writes`.
+- **Accounts**:
+  - Claude Code: `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the environment, so it uses the account you are signed in with, and messages count towards that subscription.
+  - GitHub Copilot CLI: it uses your Copilot login (`copilot`, then `/login`), and messages count towards your Copilot plan (premium requests are shown under each answer). The models offered depend on that plan; one it lacks is refused with a clear error.
 - **Security**: the bridge listens on `127.0.0.1:18765` and only answers pages of the interface (it checks the `Origin` header).
 - **Conversations**: they resume the Claude Code session (`--resume`) and are kept in the browser, per project. Their MCP calls appear in the history.
 - **Settings in the page**:
-  - the model: Opus, Sonnet, Haiku, or Claude Code's default;
+  - the agent: Claude Code or GitHub Copilot (an agent that is not installed is greyed out); switching agents starts a new conversation, since a session belongs to one agent;
+  - the model: for Claude Code, Opus, Sonnet, Haiku or its default; for Copilot, GPT-4.1, GPT-5, Claude Sonnet 4.5… or its default;
   - a "Documents only" switch, on by default. Claude then answers only from the passages it found, and says when the knowledge base does not cover the question. When it is off, Claude may add general knowledge in a separate "outside the documents" part.
-- **Bridge options**: `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (default model), `--allow-writes`.
+- **Bridge options**: `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (default Claude model), `--copilot-model gpt-4.1` (default Copilot model), `--claude` / `--copilot` (executables), `--allow-writes`. The bridge skips the shim VS Code puts in the PATH and runs the Copilot CLI itself; its JSON output needs `--experimental`, which the bridge passes.
 
 ## Claude Code plugin (skills)
 

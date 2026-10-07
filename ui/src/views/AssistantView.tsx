@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DocumentSummary } from "../api";
-import { DEFAULT_BRIDGE, health, send, type BridgeEvent, type BridgeHealth } from "../chat";
+import { DEFAULT_BRIDGE, health, send, type Agent, type BridgeEvent, type BridgeHealth } from "../chat";
 import RichText from "../RichText";
 import { locale, translate, useT, type Key, type T } from "../i18n";
 import { num } from "../util";
@@ -14,7 +14,7 @@ interface Exchange {
   parts: Part[];
   status: "running" | "done" | "stopped" | "error";
   error?: string;
-  meta?: { duration_ms: number; turns: number; input_tokens: number; output_tokens: number };
+  meta?: { duration_ms: number; turns: number; input_tokens: number; output_tokens: number; premium_requests?: number | null };
   /** Model that answered, and whether it had to stick to the documents. */
   model?: string;
   strict?: boolean;
@@ -25,10 +25,14 @@ interface Conversation {
   at: number;
   session: string | null;
   exchanges: Exchange[];
+  /** The agent that holds the session (Claude Code when absent, as in earlier versions). */
+  agent?: Agent;
 }
 
 const BRIDGE_STORAGE = "innerrag.chatBridge";
 const MODEL_STORAGE = "innerrag.chatModel";
+const COPILOT_MODEL_STORAGE = "innerrag.chatModelCopilot";
+const AGENT_STORAGE = "innerrag.chatAgent";
 const STRICT_STORAGE = "innerrag.chatStrict";
 /** Conversations kept per project in this browser. */
 const KEPT_CONVERSATIONS = 30;
@@ -40,6 +44,18 @@ const MODELS: { value: string; label: string; key?: Key }[] = [
   { value: "sonnet", label: "Sonnet" },
   { value: "haiku", label: "Haiku" },
 ];
+
+// Copilot's catalogue depends on the subscription; a model the account lacks is refused with a clear error.
+const COPILOT_MODELS: { value: string; label: string; key?: Key }[] = [
+  { value: "", label: "", key: "chat.modelDefaultCopilot" },
+  { value: "gpt-4.1", label: "GPT-4.1" },
+  { value: "gpt-5-mini", label: "GPT-5 mini" },
+  { value: "gpt-5", label: "GPT-5" },
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+  { value: "claude-haiku-4.5", label: "Claude Haiku 4.5" },
+];
+
+const AGENT_NAME: Record<Agent, Key> = { claude: "chat.agentClaude", copilot: "chat.agentCopilot" };
 
 const fresh = (): Conversation => ({ id: `c${Date.now().toString(36)}`, at: Date.now(), session: null, exchanges: [] });
 
@@ -122,7 +138,9 @@ export default function AssistantView({ project }: { project: string }) {
   const [checking, setChecking] = useState(true);
   const [saved, setSaved] = useState<Conversation[]>(() => loadConversations(project));
   const [conversation, setConversation] = useState<Conversation>(() => loadConversations(project)[0] ?? fresh());
-  const [model, setModel] = useState(() => load<string>(MODEL_STORAGE, ""));
+  const [agentChoice, setAgentChoice] = useState<Agent>(() => (load<string>(AGENT_STORAGE, "claude") === "copilot" ? "copilot" : "claude"));
+  const [claudeModel, setClaudeModel] = useState(() => load<string>(MODEL_STORAGE, ""));
+  const [copilotModel, setCopilotModel] = useState(() => load<string>(COPILOT_MODEL_STORAGE, ""));
   const [strict, setStrict] = useState(() => load<boolean>(STRICT_STORAGE, true));
   const [confirmClear, setConfirmClear] = useState(false);
   const [draft, setDraft] = useState("");
@@ -134,6 +152,11 @@ export default function AssistantView({ project }: { project: string }) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const running = conversation.exchanges.at(-1)?.status === "running";
+  // A conversation stays with the agent that started it; a new one uses the current choice.
+  const agent: Agent = conversation.exchanges.length ? conversation.agent ?? "claude" : agentChoice;
+  const model = agent === "copilot" ? copilotModel : claudeModel;
+  const models = agent === "copilot" ? COPILOT_MODELS : MODELS;
+  const agentVersion = (a: Agent) => (a === "claude" ? status?.claude : status?.copilot) ?? null;
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -253,7 +276,7 @@ export default function AssistantView({ project }: { project: string }) {
           ...x,
           status: e.ok ? "done" : "error",
           error: e.ok ? undefined : e.error ?? translate("chat.noAnswer"),
-          meta: { duration_ms: e.duration_ms, turns: e.turns, input_tokens: e.input_tokens, output_tokens: e.output_tokens },
+          meta: { duration_ms: e.duration_ms, turns: e.turns, input_tokens: e.input_tokens, output_tokens: e.output_tokens, premium_requests: e.premium_requests },
         }));
         break;
       case "error":
@@ -270,11 +293,11 @@ export default function AssistantView({ project }: { project: string }) {
     sending.current = true;
     stick.current = true;
     setDraft("");
-    setConversation((c) => ({ ...c, at: Date.now(), exchanges: [...c.exchanges, { question: message, parts: [], status: "running", model: model || undefined, strict }] }));
+    setConversation((c) => ({ ...c, at: Date.now(), exchanges: [...c.exchanges, { question: message, parts: [], status: "running", model: model || undefined, strict }], agent }));
     const ctrl = new AbortController();
     abort.current = ctrl;
     try {
-      await send(bridge, { project, message, session: conversation.session, model: model || undefined, strict, conversation: conversation.id }, onEvent, ctrl.signal);
+      await send(bridge, { project, message, session: conversation.session, model: model || undefined, strict, conversation: conversation.id, agent }, onEvent, ctrl.signal);
       update((x) => (x.status === "running" ? { ...x, status: "error", error: translate("chat.cut") } : x));
     } catch (err) {
       if (ctrl.signal.aborted) {
@@ -417,13 +440,20 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
               {x.status === "error" && <div className="error-banner" role="alert">{x.error}</div>}
               {x.meta && (
                 <p className="chat-meta">
-                  {t("chat.meta", {
-                    s: num(Math.round(x.meta.duration_ms / 100) / 10),
-                    turns: t("chat.turns", { n: x.meta.turns }),
-                    read: x.meta.input_tokens,
-                    written: x.meta.output_tokens,
-                  })}
-                  {x.model && `, ${MODELS.find((m) => m.value === x.model)?.label ?? x.model}`}
+                  {x.meta.input_tokens > 0
+                    ? t("chat.meta", {
+                        s: num(Math.round(x.meta.duration_ms / 100) / 10),
+                        turns: t("chat.turns", { n: x.meta.turns }),
+                        read: x.meta.input_tokens,
+                        written: x.meta.output_tokens,
+                      })
+                    : t("chat.metaWritten", {
+                        s: num(Math.round(x.meta.duration_ms / 100) / 10),
+                        turns: t("chat.turns", { n: x.meta.turns }),
+                        written: x.meta.output_tokens,
+                      })}
+                  {x.meta.premium_requests != null && `, ${t("chat.premium", { n: x.meta.premium_requests })}`}
+                  {x.model && `, ${[...MODELS, ...COPILOT_MODELS].find((m) => m.value === x.model)?.label ?? x.model}`}
                   {x.strict === false && t("chat.general")}
                 </p>
               )}
@@ -474,19 +504,53 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
       <aside className="chat-side" aria-label={t("chat.sideAria")}>
         <section className="panel chat-side-box">
           <span className={`bridge-status${ready ? " on" : ""}`} role="status">
-            {checking ? t("chat.looking") : ready ? t("chat.connected", { version: status?.claude?.replace(" (Claude Code)", "") ?? "" }) : t("chat.bridgeOff")}
+            {checking
+              ? t("chat.looking")
+              : ready && agentVersion(agent)
+                ? t("chat.connected", {
+                    agent: t(AGENT_NAME[agent]),
+                    version: (agentVersion(agent) ?? "").replace(" (Claude Code)", "").replace("GitHub Copilot CLI ", "").replace(/\.$/, ""),
+                  })
+                : t("chat.bridgeOff")}
           </span>
+          <label className="field">
+            <span className="label">{t("chat.agent")}</span>
+            <select
+              className="input"
+              value={agent}
+              disabled={running}
+              onChange={(e) => {
+                const next = e.target.value as Agent;
+                setAgentChoice(next);
+                save(AGENT_STORAGE, JSON.stringify(next));
+                // A session belongs to one agent: switching starts a new conversation.
+                if (conversation.exchanges.length && next !== agent) restart();
+              }}
+            >
+              {(["claude", "copilot"] as Agent[]).map((a) => (
+                <option key={a} value={a} disabled={!!status && !agentVersion(a)}>
+                  {status && !agentVersion(a) ? t("chat.agentMissing", { agent: t(AGENT_NAME[a]) }) : t(AGENT_NAME[a])}
+                </option>
+              ))}
+            </select>
+            <span className="hint">{t("chat.agentHint")}</span>
+          </label>
           <label className="field">
             <span className="label">{t("chat.model")}</span>
             <select
               className="input"
               value={model}
               onChange={(e) => {
-                setModel(e.target.value);
-                save(MODEL_STORAGE, JSON.stringify(e.target.value));
+                if (agent === "copilot") {
+                  setCopilotModel(e.target.value);
+                  save(COPILOT_MODEL_STORAGE, JSON.stringify(e.target.value));
+                } else {
+                  setClaudeModel(e.target.value);
+                  save(MODEL_STORAGE, JSON.stringify(e.target.value));
+                }
               }}
             >
-              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.key ? t(m.key) : m.label}</option>)}
+              {models.map((m) => <option key={m.value} value={m.value}>{m.key ? t(m.key) : m.label}</option>)}
             </select>
             <span className="hint">{t("chat.modelHint")}</span>
           </label>

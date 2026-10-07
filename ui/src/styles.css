@@ -638,3 +638,4 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .rich-preview svg { display: block; margin: 0 auto; }
 .rich-source { margin: -0.4em 0 0.9em; font-size: 13px; }
 .rich-source summary { cursor: pointer; color: var(--link); min-height: 28px; display: flex; align-items: center; }
+.mcp-connect-hint { font-size: 13px; margin-top: -8px; }

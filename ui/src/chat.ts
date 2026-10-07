@@ -1,12 +1,16 @@
-// Client of the chat bridge (scripts/chat-bridge.py), which runs on the host next to a
-// logged-in Claude Code and streams its answers as newline-delimited JSON.
+// Client of the chat bridge (scripts/chat-bridge.py), which runs on the host next to a logged-in
+// Claude Code or GitHub Copilot CLI and streams their answers as newline-delimited JSON.
 import { translate } from "./i18n";
 
 export const DEFAULT_BRIDGE = "http://127.0.0.1:18765";
 
+export type Agent = "claude" | "copilot";
+
 export interface BridgeHealth {
   ok: boolean;
   claude: string | null;
+  /** Absent from bridges older than Copilot support. */
+  copilot?: string | null;
   innerrag: string;
   model: string | null;
   writes: boolean;
@@ -28,6 +32,8 @@ export type BridgeEvent =
       turns: number;
       input_tokens: number;
       output_tokens: number;
+      /** Copilot only: premium requests used. */
+      premium_requests?: number | null;
     }
   | { type: "error"; message: string };
 
@@ -37,10 +43,10 @@ export async function health(bridge: string, signal?: AbortSignal): Promise<Brid
   return res.json();
 }
 
-/** Sends one message and calls `onEvent` for each event until Claude has finished. */
+/** Sends one message and calls `onEvent` for each event until the agent has finished. */
 export async function send(
   bridge: string,
-  body: { project: string; message: string; session?: string | null; model?: string; strict?: boolean; conversation?: string },
+  body: { project: string; message: string; session?: string | null; model?: string; strict?: boolean; conversation?: string; agent?: Agent },
   onEvent: (e: BridgeEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

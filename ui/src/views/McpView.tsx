@@ -65,7 +65,13 @@ export default function McpView({ project, params }: { project: string; params: 
       <div className="mcp-connect">
         <Copyable label={t("mcp.endpoint")} value={endpoint} />
         <Copyable label="Claude Code" value={`claude mcp add --transport http innerrag ${endpoint}`} />
+        <Copyable
+          label="GitHub Copilot CLI"
+          title={t("mcp.copilotHint")}
+          value={JSON.stringify({ mcpServers: { innerrag: { type: "http", url: endpoint, tools: ["*"] } } })}
+        />
       </div>
+      <p className="muted mcp-connect-hint">GitHub Copilot CLI : {t("mcp.copilotHint")}</p>
 
       {error && <div className="error-banner" role="alert">{t("mcp.loadError", { error })}</div>}
 
@@ -98,13 +104,13 @@ export default function McpView({ project, params }: { project: string; params: 
   );
 }
 
-function Copyable({ label, value }: { label: string; value: string }) {
+function Copyable({ label, value, title }: { label: string; value: string; title?: string }) {
   const [copied, setCopied] = useState(false);
   const t = useT();
   return (
     <div className="copyable">
       <span className="copyable-label">{label}</span>
-      <code className="mono" title={value}>{value}</code>
+      <code className="mono" title={title ?? value}>{value}</code>
       <button
         type="button"
         className="copyable-button"

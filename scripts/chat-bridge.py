@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Bridge between the innerrag interface and the Claude Code installed on this machine.
+"""Bridge between the innerrag interface and the coding agents installed on this machine.
 
-The innerrag server runs in Docker and cannot start the `claude` of the host. This script runs
-on the host, next to a logged-in Claude Code, and lets the "Assistant" page of the interface
-chat with it: each message starts `claude -p`, connected to the innerrag MCP server of the
-current project, and its events are streamed back to the page.
+The innerrag server runs in Docker and cannot start the agents of the host. This script runs on
+the host and lets the "Assistant" page of the interface chat with one of them:
 
-No API key is used: ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are removed from the
-environment of `claude`, which therefore uses the account you logged in with (`claude`, then
-/login). The messages count against that subscription.
+- Claude Code (`claude -p`), with the account you logged in with (`claude`, then /login);
+  ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are removed from its environment, so no API key
+  is used and the messages count against that subscription;
+- GitHub Copilot CLI (`copilot -p`), with your GitHub Copilot subscription (`copilot`, then
+  /login); its built-in GitHub MCP server is turned off.
 
-Claude only gets the read tools of innerrag: no shell, no file access, no ingestion
-(unless --allow-writes). The bridge listens on 127.0.0.1 and only answers pages served by the
-innerrag interface (Origin check), so another website cannot drive it.
+Each message starts the chosen agent, connected to the innerrag MCP server of the current
+project, and its events are streamed back to the page. The agent only gets the read tools of
+innerrag: no shell, no file access, no ingestion (unless --allow-writes). The bridge listens on
+127.0.0.1 and only answers pages served by the innerrag interface (Origin check), so another
+website cannot drive it.
 
 Usage:
     python3 scripts/chat-bridge.py [--innerrag http://localhost:18080] [--port 18765] [--model sonnet]
+                                   [--claude claude] [--copilot copilot] [--copilot-model gpt-4.1]
 
 Standard library only (Python 3.9+), Windows, macOS and Linux.
 """
@@ -46,12 +49,12 @@ READ_TOOLS = [
     "ingestion_status",
 ]
 WRITE_TOOLS = ["ingest_document", "ingest_file"]
+AGENTS = ("claude", "copilot")
 PROJECT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")
 CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-MAX_MESSAGE = 20_000
-
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,63}$")
+MAX_MESSAGE = 20_000
 
 SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`.
 Call the innerrag tools before answering: search_knowledge first (mode "map" to survey a broad
@@ -96,45 +99,68 @@ def allowed_origins(innerrag):
     return out
 
 
-def claude_version(claude):
+def version_of(executable):
+    if not executable:
+        return None
     try:
-        out = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=20)
-        return out.stdout.strip() or None
+        out = subprocess.run(
+            [executable, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
+        )
+        lines = out.stdout.strip().splitlines()
+        return lines[0].strip() if out.returncode == 0 and lines else None
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+def find_copilot(name):
+    """The Copilot CLI itself: VS Code puts a shim first in PATH that prompts and re-launches it."""
+    if os.sep in name or (os.altsep and os.altsep in name):
+        return name if Path(name).exists() else None
+    names = [name] if os.name != "nt" else [name + ".cmd", name + ".exe", name]
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        for n in names:
+            candidate = Path(folder) / n
+            if candidate.is_file() and "copilotCli" not in str(candidate) and os.access(candidate, os.X_OK):
+                return str(candidate)
+    return shutil.which(name)
 
 
 class Bridge:
     def __init__(self, args):
         self.args = args
         self.claude = shutil.which(args.claude) or args.claude
-        self.version = claude_version(self.claude)
+        self.version = version_of(self.claude)
+        self.copilot = find_copilot(args.copilot)
+        self.copilot_version = version_of(self.copilot)
         self.origins = allowed_origins(args.innerrag)
-        # A fixed working directory: Claude Code files sessions by directory, and --resume needs
-        # to find them again. Nothing of the host project leaks in (no CLAUDE.md there).
+        # A fixed working directory: the agents file their sessions by directory, and resuming
+        # needs to find them again. Nothing of a host project leaks in (no CLAUDE.md, no AGENTS.md).
         self.workdir = Path(tempfile.gettempdir()) / "innerrag-chat"
         self.workdir.mkdir(parents=True, exist_ok=True)
-        tools = READ_TOOLS + (WRITE_TOOLS if args.allow_writes else [])
-        self.allowed = [f"mcp__innerrag__{t}" for t in tools]
-        self.denied = [] if args.allow_writes else [f"mcp__innerrag__{t}" for t in WRITE_TOOLS]
+        self.tools = READ_TOOLS + (WRITE_TOOLS if args.allow_writes else [])
 
-    def command(self, project, session, model=None, strict=True, conversation="default"):
-        mcp = {
-            "mcpServers": {
-                "innerrag": {"type": "http", "url": f"{self.args.innerrag.rstrip('/')}/mcp/{project}"}
-            }
-        }
+    def available(self, agent):
+        return (self.version if agent == "claude" else self.copilot_version) is not None
+
+    def instructions(self, project, strict, conversation):
+        return SYSTEM_PROMPT.format(project=project, grounding=STRICT if strict else OPEN, conversation=conversation)
+
+    def mcp_url(self, project):
+        return f"{self.args.innerrag.rstrip('/')}/mcp/{project}"
+
+    def claude_command(self, project, session, model, strict, conversation):
+        mcp = {"mcpServers": {"innerrag": {"type": "http", "url": self.mcp_url(project)}}}
         cmd = [
             self.claude, "-p",
             "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--tools", "",
             "--mcp-config", json.dumps(mcp), "--strict-mcp-config",
-            "--allowedTools", ",".join(self.allowed),
+            "--allowedTools", ",".join(f"mcp__innerrag__{t}" for t in self.tools),
             "--setting-sources", "",
-            "--append-system-prompt", SYSTEM_PROMPT.format(project=project, grounding=STRICT if strict else OPEN, conversation=conversation),
+            "--append-system-prompt", self.instructions(project, strict, conversation),
         ]
-        if self.denied:
-            cmd += ["--disallowedTools", ",".join(self.denied)]
+        if not self.args.allow_writes:
+            cmd += ["--disallowedTools", ",".join(f"mcp__innerrag__{t}" for t in WRITE_TOOLS)]
         model = model or self.args.model
         if model:
             cmd += ["--model", model]
@@ -142,8 +168,31 @@ class Bridge:
             cmd += ["--resume", session]
         return cmd
 
+    def copilot_command(self, project, session, model, strict, conversation, message):
+        mcp = {"mcpServers": {"innerrag": {"type": "http", "url": self.mcp_url(project), "tools": ["*"]}}}
+        # JSON output is still experimental in Copilot CLI 1.0 and must follow --experimental.
+        cmd = [
+            self.copilot, "--experimental", "--output-format", "json",
+            "--additional-mcp-config", json.dumps(mcp),
+            # Only innerrag's tools are visible to the model: no shell, no file, no web.
+            "--available-tools", ",".join(f"innerrag-{t}" for t in self.tools),
+            "--allow-tool", "innerrag",
+            "--disable-builtin-mcps", "--no-custom-instructions", "--no-ask-user",
+        ]
+        if not self.args.allow_writes:
+            for t in WRITE_TOOLS:
+                cmd += ["--deny-tool", f"innerrag({t})"]
+        model = model or self.args.copilot_model
+        if model:
+            cmd += ["--model", model]
+        if session:
+            cmd.append(f"--resume={session}")
+        # Copilot has no system prompt option: the instructions open every message.
+        prompt = f"{self.instructions(project, strict, conversation)}\n\n---\nUser question:\n{message}"
+        return cmd + ["-p", prompt]
+
     @staticmethod
-    def env():
+    def claude_env():
         env = dict(os.environ)
         for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
             env.pop(key, None)
@@ -158,7 +207,7 @@ def tool_result_text(content):
     return ""
 
 
-def translate(event, state):
+def translate_claude(event, state):
     """Claude Code stream-json events → the few events the interface needs."""
     kind = event.get("type")
     if kind == "system" and event.get("subtype") == "init":
@@ -197,6 +246,56 @@ def translate(event, state):
             "input_tokens": (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0)
             + (usage.get("cache_read_input_tokens") or 0),
             "output_tokens": usage.get("output_tokens") or 0,
+        }
+
+
+def translate_copilot(event, state):
+    """GitHub Copilot CLI JSON events → the same events as for Claude Code."""
+    kind = event.get("type")
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    if kind == "assistant.message_delta":
+        delta = data.get("deltaContent", "")
+        # After reporting its sources, Copilot tends to repeat the whole answer: hold that text
+        # back and only pass it on at the end if it is new.
+        if state.get("cited"):
+            state["after"] = state.get("after", "") + delta
+        else:
+            state["said"] = state.get("said", "") + delta
+            yield {"type": "text", "delta": delta}
+    elif kind == "assistant.turn_start":
+        state["turns"] = state.get("turns", 0) + 1
+        yield {"type": "turn"}
+    elif kind == "assistant.message":
+        state["output_tokens"] = state.get("output_tokens", 0) + (data.get("outputTokens") or 0)
+    elif kind == "tool.execution_start":
+        name = data.get("mcpToolName") or str(data.get("toolName", "")).removeprefix("innerrag-")
+        if name == "cite_sources":
+            state["cited"] = True
+        yield {"type": "tool", "id": data.get("toolCallId"), "name": name, "input": data.get("arguments") or {}}
+    elif kind == "tool.execution_complete":
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        error = data.get("error") if isinstance(data.get("error"), dict) else {}
+        text = result.get("content") or tool_result_text(result.get("contents")) or error.get("message", "")
+        yield {"type": "tool_result", "id": data.get("toolCallId"), "text": str(text), "is_error": not data.get("success", True)}
+    elif kind == "session.error":
+        state["error"] = data.get("message") or "Copilot error"
+    elif kind == "result":
+        after = state.get("after", "").strip()
+        said = " ".join(state.get("said", "").split())
+        if after and " ".join(after.split())[:80] not in said:
+            yield {"type": "text", "delta": ("\n\n" if said else "") + after}
+        usage = event.get("usage") or {}
+        error = state.get("error")
+        yield {
+            "type": "done",
+            "ok": event.get("exitCode", 0) == 0 and not error,
+            "error": error,
+            "session": event.get("sessionId"),
+            "duration_ms": usage.get("sessionDurationMs"),
+            "turns": state.get("turns", 0),
+            "input_tokens": 0,
+            "output_tokens": state.get("output_tokens", 0),
+            "premium_requests": usage.get("premiumRequests"),
         }
 
 
@@ -243,12 +342,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.rstrip("/") in ("", "/health"):
             b = self.bridge
             return self.json(200, {
-                "ok": b.version is not None,
+                "ok": b.version is not None or b.copilot_version is not None,
                 "claude": b.version,
+                "copilot": b.copilot_version,
                 "innerrag": b.args.innerrag,
                 "model": b.args.model,
+                "copilot_model": b.args.copilot_model,
                 "writes": b.args.allow_writes,
-                "tools": [t.removeprefix("mcp__innerrag__") for t in b.allowed],
+                "tools": b.tools,
             })
         self.json(404, {"error": "not found"})
 
@@ -278,11 +379,15 @@ class Handler(BaseHTTPRequestHandler):
         conversation = str(body.get("conversation") or "default")
         if not CONVERSATION_ID.match(conversation):
             return self.json(400, {"error": "invalid conversation id"})
-        if self.bridge.version is None:
-            return self.json(503, {"error": f"`{self.bridge.args.claude}` not found or not working on this machine"})
-        self.stream(project, message, session, model, strict, conversation)
+        agent = str(body.get("agent") or "claude")
+        if agent not in AGENTS:
+            return self.json(400, {"error": f"unknown agent {agent}: use claude or copilot"})
+        if not self.bridge.available(agent):
+            name = self.bridge.args.claude if agent == "claude" else self.bridge.args.copilot
+            return self.json(503, {"error": f"`{name}` not found or not working on this machine"})
+        self.stream(agent, project, message, session, model, strict, conversation)
 
-    def stream(self, project, message, session, model, strict, conversation):
+    def stream(self, agent, project, message, session, model, strict, conversation):
         self.send_response(200)
         self.cors()
         self.send_header("Content-Type", "application/x-ndjson")
@@ -291,17 +396,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
-        cmd = self.bridge.command(project, session, model, strict, conversation)
+        b = self.bridge
+        if agent == "copilot":
+            cmd = b.copilot_command(project, session, model, strict, conversation, message)
+            env, translate = dict(os.environ), translate_copilot
+        else:
+            cmd = b.claude_command(project, session, model, strict, conversation)
+            env, translate = b.claude_env(), translate_claude
         try:
             proc = subprocess.Popen(
-                cmd, cwd=self.bridge.workdir, env=self.bridge.env(), stdin=subprocess.PIPE,
+                cmd, cwd=b.workdir, env=env, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
             )
         except OSError as e:
-            self.send({"type": "error", "message": f"cannot start claude: {e}"})
+            self.send({"type": "error", "message": f"cannot start {agent}: {e}"})
             return
-        # The message goes through stdin, never through the command line.
-        proc.stdin.write(message)
+        # Claude reads the message on stdin, never on the command line; Copilot only takes -p.
+        if agent == "claude":
+            proc.stdin.write(message)
         proc.stdin.close()
         errors = []
         threading.Thread(target=lambda: errors.extend(proc.stderr.readlines()), daemon=True).start()
@@ -318,11 +430,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send(out)
             proc.wait()
             if not state["done"]:
-                detail = "".join(errors).strip()[-800:] or f"claude exited with code {proc.returncode}"
+                detail = state.get("error") or "".join(errors).strip()[-800:] or f"{agent} exited with code {proc.returncode}"
                 self.send({"type": "error", "message": detail})
         except (BrokenPipeError, ConnectionResetError):
             # The page stopped the answer or went away.
-            self.log_message("client went away, stopping claude")
+            self.log_message("client went away, stopping %s", agent)
         finally:
             if proc.poll() is None:
                 proc.terminate()
@@ -337,24 +449,29 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Bridge between the innerrag interface and the local Claude Code.")
+    p = argparse.ArgumentParser(description="Bridge between the innerrag interface and the local coding agents.")
     p.add_argument("--innerrag", default=os.environ.get("INNERRAG_URL", "http://localhost:18080"),
                    help="URL of the innerrag server, as seen from this machine (default: %(default)s)")
     p.add_argument("--port", type=int, default=int(os.environ.get("INNERRAG_CHAT_PORT", "18765")),
                    help="port to listen on, on 127.0.0.1 (default: %(default)s)")
     p.add_argument("--model", default=os.environ.get("INNERRAG_CHAT_MODEL"),
                    help="Claude model alias or id (default: the one of your Claude Code settings)")
-    p.add_argument("--claude", default="claude", help="claude executable (default: %(default)s)")
-    p.add_argument("--allow-writes", action="store_true", help="also let Claude ingest documents")
+    p.add_argument("--claude", default="claude", help="Claude Code executable (default: %(default)s)")
+    p.add_argument("--copilot", default="copilot", help="GitHub Copilot CLI executable (default: %(default)s)")
+    p.add_argument("--copilot-model", default=os.environ.get("INNERRAG_COPILOT_MODEL"),
+                   help="Copilot model (default: the one of your Copilot settings)")
+    p.add_argument("--allow-writes", action="store_true", help="also let the agent ingest documents")
     args = p.parse_args()
 
     bridge = Bridge(args)
-    if bridge.version is None:
-        sys.exit(f"`{args.claude}` not found or not working. Install Claude Code and log in with `claude` first.")
+    if bridge.version is None and bridge.copilot_version is None:
+        sys.exit("Neither Claude Code nor GitHub Copilot CLI works on this machine: install one and log in first.")
     Handler.bridge = bridge
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"innerrag chat bridge on http://127.0.0.1:{args.port}")
-    print(f"  Claude Code {bridge.version}, innerrag at {args.innerrag}")
+    print(f"  Claude Code: {bridge.version or 'not found'}")
+    print(f"  GitHub Copilot CLI: {bridge.copilot_version or 'not found'}" + (f" ({bridge.copilot})" if bridge.copilot_version else ""))
+    print(f"  innerrag at {args.innerrag}")
     print(f"  pages allowed: {', '.join(sorted(bridge.origins))}")
     print("  Ctrl+C to stop")
     try:

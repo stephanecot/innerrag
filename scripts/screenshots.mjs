@@ -2,7 +2,7 @@
 // Captures the README screenshots from a running innerrag (and, for the assistant, its chat
 // bridge) with a headless Chrome driven over the DevTools protocol. Node 22+, no dependency.
 //
-//   node scripts/screenshots.mjs [--url http://localhost:18080] [--out docs/screenshots] [--lang fr] [--only map,mcp] [--ask "question"]
+//   node scripts/screenshots.mjs [--url http://localhost:18080] [--out docs/screenshots] [--lang fr] [--only map,mcp] [--ask "question"] [--agent claude|copilot] [--model name]
 //
 // Each shot opens a page in a fresh tab with the project and language set in localStorage,
 // optionally acts on it (click, type), waits, then saves a PNG.
@@ -157,7 +157,9 @@ async function main() {
       await page("Runtime.evaluate", {
         expression: `localStorage.setItem("innerrag.project", ${JSON.stringify(shot.project)});
                      localStorage.setItem("innerrag.lang", ${JSON.stringify(LANG)});
-                     localStorage.setItem("innerrag.theme", "light");`,
+                     localStorage.setItem("innerrag.theme", "light");
+                     ${args.agent ? `localStorage.setItem("innerrag.chatAgent", ${JSON.stringify(JSON.stringify(args.agent))});` : ""}
+                     ${args.model ? `localStorage.setItem(${JSON.stringify(args.agent === "copilot" ? "innerrag.chatModelCopilot" : "innerrag.chatModel")}, ${JSON.stringify(JSON.stringify(args.model))});` : ""}`,
       });
       await page("Page.navigate", { url: `${BASE}/?shot=${shot.name}${shot.route}` });
       await sleep(shot.wait);
