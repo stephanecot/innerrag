@@ -641,20 +641,28 @@ function DocumentPanel({
 
       <section style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--rule-soft)", paddingTop: 18 }}>
         <h3>Lire</h3>
-        <p className="muted" style={{ fontSize: 14 }}>
-          {plural(doc.passage_count, "passage indexé", "passages indexés")}, {plural(doc.entities, "entité", "entités")}.
-        </p>
         <div className="toolbar">
           <a className="btn btn-primary" href={href("lire", { doc: doc.id })}>Lire le document</a>
           {file?.stored && (
             <a className="btn" href={p.fileUrl(doc.id)} target="_blank" rel="noopener">Ouvrir l'original ({file.format_label})</a>
           )}
-          <a className="btn" href={href("lire", { doc: doc.id, tab: "passages" })}>Voir les passages</a>
         </div>
-        {doc.passages.slice(0, 2).map((c) => (
+      </section>
+
+      <section style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--rule-soft)", paddingTop: 18 }}>
+        <h3>Comment ce document est indexé</h3>
+        <p className="muted" style={{ fontSize: 14 }}>
+          Pour la recherche, le document est découpé en {plural(doc.passage_count, "passage", "passages")} d'environ
+          1 000 caractères, dans lesquels {plural(doc.entities, "entité a été repérée", "entités ont été repérées")}.
+          Ce sont ces passages que la recherche retrouve et que les agents reçoivent, jamais le document entier.
+        </p>
+        <a className="btn" style={{ alignSelf: "flex-start" }} href={href("lire", { doc: doc.id, tab: "passages" })}>
+          Voir le découpage complet
+        </a>
+        {doc.passages.slice(0, 1).map((c) => (
           <article key={c.id} className="passage">
             <div className="passage-head">
-              <strong>Passage {c.idx + 1}</strong>
+              <strong>Exemple : le passage {c.idx + 1}</strong>
               {c.page && <a href={href("lire", { doc: doc.id, page: String(c.page) })}>page {c.page}</a>}
             </div>
             <p className="clamp">{c.text}</p>

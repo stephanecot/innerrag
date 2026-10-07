@@ -213,6 +213,8 @@ export interface HistoryView {
   totals: { calls: number; context_tokens: number; median_ms: number; errors: number };
   series: { at: number; calls: number; mcp_tokens: number; other_tokens: number }[];
   calls: CallRecord[];
+  offset: number;
+  limit: number;
 }
 
 export interface ServerConfig {
@@ -272,7 +274,7 @@ export const api = {
   jobs: (project = "") => request<Job[]>(`/api/jobs${qs({ project })}`),
   job: (id: string) => request<Job>(`/api/jobs/${enc(id)}`),
   cancelJob: (id: string) => request<void>(`/api/jobs/${enc(id)}`, { method: "DELETE" }),
-  history: (p: { hours?: number; channel?: string; operation?: string; project?: string; errors?: boolean }) =>
+  history: (p: { hours?: number; channel?: string; operation?: string; project?: string; errors?: boolean; offset?: number; limit?: number }) =>
     request<HistoryView>(`/api/history${qs(p)}`),
 
   projects: () => request<Project[]>("/api/projects"),

@@ -134,8 +134,9 @@ impl History {
             }
         }
 
-        let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
-        HistoryView { totals, series, calls: matching.into_iter().take(limit).collect() }
+        let limit = filter.limit.unwrap_or(50).clamp(1, 500);
+        let offset = filter.offset.min(matching.len());
+        HistoryView { totals, series, calls: matching.into_iter().skip(offset).take(limit).collect(), offset, limit }
     }
 }
 
@@ -150,7 +151,10 @@ pub struct HistoryFilter {
     pub project: String,
     #[serde(default)]
     pub errors: bool,
+    /// Page size and start (newest first).
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,7 +177,10 @@ pub struct Bucket {
 pub struct HistoryView {
     pub totals: Totals,
     pub series: Vec<Bucket>,
+    /// One page of matching calls, newest first.
     pub calls: Vec<CallRecord>,
+    pub offset: usize,
+    pub limit: usize,
 }
 
 /// Measures one call; `finish` records it.

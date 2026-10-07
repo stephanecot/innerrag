@@ -14,16 +14,23 @@ export default function HistoryView({ projects, current }: { projects: Project[]
   const [operation, setOperation] = useState("");
   const [project, setProject] = useState(current);
   const [errors, setErrors] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const PAGE = 50;
   const [data, setData] = useState<History | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setData(await api.history({ hours, channel, operation, project, errors }));
+      setData(await api.history({ hours, channel, operation, project, errors, offset, limit: PAGE }));
       setError("");
     } catch (e) {
       setError((e as Error).message);
     }
+  }, [hours, channel, operation, project, errors, offset]);
+
+  // A new filter starts again from the newest calls.
+  useEffect(() => {
+    setOffset(0);
   }, [hours, channel, operation, project, errors]);
 
   useEffect(() => {
@@ -111,6 +118,9 @@ export default function HistoryView({ projects, current }: { projects: Project[]
         </label>
       </div>
 
+      {data && data.totals.calls > PAGE && (
+        <Pager offset={offset} total={data.totals.calls} page={PAGE} onChange={setOffset} />
+      )}
       {data && data.calls.length === 0 ? (
         <div className="panel empty"><p>Aucun appel sur cette période avec ces filtres.</p></div>
       ) : (
@@ -145,6 +155,28 @@ export default function HistoryView({ projects, current }: { projects: Project[]
           </table>
         </div>
       )}
+      {data && data.totals.calls > PAGE && (
+        <Pager offset={offset} total={data.totals.calls} page={PAGE} onChange={setOffset} />
+      )}
     </section>
+  );
+}
+
+function Pager({ offset, total, page, onChange }: { offset: number; total: number; page: number; onChange: (o: number) => void }) {
+  const last = Math.max(0, Math.floor((total - 1) / page) * page);
+  return (
+    <nav className="toolbar" aria-label="Pages de l'historique" style={{ justifyContent: "space-between" }}>
+      <div className="toolbar">
+        <button type="button" className="btn" disabled={offset === 0} onClick={() => onChange(0)}>Plus récents</button>
+        <button type="button" className="btn" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - page))}>← Précédents</button>
+      </div>
+      <span className="muted">
+        {num(offset + 1)}–{num(Math.min(offset + page, total))} sur {num(total)} appels
+      </span>
+      <div className="toolbar">
+        <button type="button" className="btn" disabled={offset + page >= total} onClick={() => onChange(offset + page)}>Suivants →</button>
+        <button type="button" className="btn" disabled={offset >= last} onClick={() => onChange(last)}>Plus anciens</button>
+      </div>
+    </nav>
   );
 }
