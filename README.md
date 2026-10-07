@@ -16,10 +16,10 @@ A **Graph RAG** server that runs entirely on your machine. It is written in Rust
 - **Documents**: `DRAFT` / `PUBLISHED` status, creator and tags; you can add, replace and delete them.
 - **Interfaces**: REST API, an **MCP** server (HTTP), a React web interface and a Claude Code plugin (skills).
 - **Call history**, with the size of the context returned (estimated tokens), the duration and the errors.
-- **Assistant**: chat with the Claude Code installed on your computer, connected to the project's MCP server, with no API key.
+- **Assistant**: chat with the Claude Code or GitHub Copilot CLI installed on your computer, connected to the project's MCP server, with no API key.
 - **Gaps**: the questions the knowledge base could not answer, and the answers agents cited, proposed as reference questions.
 - **Figures**: images of PDF, Word, PowerPoint and web pages are kept with the passage they appear in, shown in the reader, the map and search, and passed to agents.
-- **Interface** in English and French.
+- **Interface** in English and French, light and dark themes, checked with axe-core on every page (no violations).
 
 ## Overview
 
@@ -144,11 +144,13 @@ The server needs network access to the address; nothing else in innerrag does.
 
 - PDF: the images `pdftohtml` finds, placed by their height on the page (those entirely in a margin, such as running logos, are left out);
 - Word and PowerPoint: the pictures of the document or of each slide, with their alt text (Office's automatic descriptions are ignored);
-- web pages: the `<img>` of the main content, downloaded from their address (up to 40 per page), with their `<figcaption>`; images embedded as `data:` URIs too, including in an uploaded HTML file.
+- web pages: the `<img>` of the main content, downloaded from their address (up to 80 per page), with their `<figcaption>`; images embedded as `data:` URIs too, including in an uploaded HTML file.
 
-Only images a browser shows (PNG, JPEG, GIF, WebP) of at least 2 KB are kept; one repeated four times or more in a document (a logo, an ornament) is dropped, and a document keeps at most 300. The caption is the alt text, else the "Figure 3: …" line that follows the image. Files go to the project's `files/images/`, named by their content (shared between documents, removed when no document shows them any more).
+Only images a browser shows (PNG, JPEG, GIF, WebP) of at least 2 KB are kept; one repeated four times or more in a document (a logo, an ornament) is dropped, and a document keeps at most 300. The caption is the alt text, else the "Figure 3: …" line that follows the image; on a web page, an image without alt text takes the short line that follows it (typically the title of an article card). Files go to the project's `files/images/`, named by their content (shared between documents, removed when no document shows them any more).
 
 They appear in the reader where they are in the text, under the passages of a search, in an entity's panel on the map (its figures), and in what the MCP tools return (`![caption](/api/projects/{p}/images/{file})`), which the Assistant page displays. There is no image recognition: a figure is understood through its caption and its passage.
+
+**Known limit.** A figure is linked to its passage (about 1,000 characters), so an entity shows every figure of the passages that cite it. On a page made of article cards, this brings in the images of the neighbouring cards. `docs/IDEES.md` studies how to tie each image to the entities it actually shows.
 
 **Watched folders.** Mount a folder under `/watch` (for example a repository's `docs/`) and attach it to a project from the Projects page. Its files are imported, then kept in sync every 30 seconds; only changed passages are recomputed.
 
@@ -299,6 +301,7 @@ py scripts\chat-bridge.py                # Windows
   - the agent: Claude Code or GitHub Copilot (an agent that is not installed is greyed out); switching agents starts a new conversation, since a session belongs to one agent;
   - the model: for Claude Code, Opus, Sonnet, Haiku or its default; for Copilot, GPT-4.1, GPT-5, Claude Sonnet 4.5… or its default;
   - a "Documents only" switch, on by default. Claude then answers only from the passages it found, and says when the knowledge base does not cover the question. When it is off, Claude may add general knowledge in a separate "outside the documents" part.
+- **Answers**: rendered as Markdown, with tables, figures from the documents, and ```` ```svg ```` / ```` ```html ```` blocks shown as a sanitized preview next to their source. Agents sometimes write their answer again after `cite_sources`; the bridge drops that repeat.
 - **Bridge options**: `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (default Claude model), `--copilot-model gpt-4.1` (default Copilot model), `--claude` / `--copilot` (executables), `--allow-writes`. The bridge skips the shim VS Code puts in the PATH and runs the Copilot CLI itself; its JSON output needs `--experimental`, which the bridge passes.
 
 ## Claude Code plugin (skills)
@@ -336,6 +339,6 @@ Code layout:
 - `ui/`: the web interface (React + Vite);
 - `plugins/innerrag/`: the Claude Code plugin;
 - `docs/PLAN.md`: the initial plan;
-- `docs/IDEES.md`: ideas for what comes next.
+- `docs/IDEES.md`: the next piece of work under study (linking images to the entities they show).
 
 The interface mock-up was designed in Claude Design.
