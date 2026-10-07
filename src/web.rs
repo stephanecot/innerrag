@@ -12,7 +12,7 @@ use crate::Invalid;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: u32 = 5;
 
-const MAX_PAGE_IMAGES: usize = 40;
+const MAX_PAGE_IMAGES: usize = 80;
 const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Downloads `url` (http or https) and returns a file name that tells its format, its bytes,

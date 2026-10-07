@@ -55,6 +55,8 @@ SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")
 CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,63}$")
 MAX_MESSAGE = 20_000
+# Text written before `cite_sources` that is at least this long is taken as the answer.
+ANSWER_MIN_CHARS = 160
 
 SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`.
 Call the innerrag tools before answering: search_knowledge first (mode "map" to survey a broad
@@ -207,6 +209,24 @@ def tool_result_text(content):
     return ""
 
 
+def answer_text(delta, state):
+    """Both agents tend to write their answer again after reporting its sources, often reworded:
+    that text is held back, and only passed on (by `held_answer`) when no real answer came before."""
+    if state.get("cited"):
+        state["after"] = state.get("after", "") + delta
+    else:
+        state["said"] = state.get("said", "") + delta
+        yield {"type": "text", "delta": delta}
+
+
+def held_answer(state):
+    after = state.get("after", "").strip()
+    said = " ".join(state.get("said", "").split())
+    # A short line before the citation ("Je cherche…") is not an answer: keep what follows.
+    if after and len(said) < ANSWER_MIN_CHARS:
+        yield {"type": "text", "delta": ("\n\n" if said else "") + after}
+
+
 def translate_claude(event, state):
     """Claude Code stream-json events → the few events the interface needs."""
     kind = event.get("type")
@@ -219,12 +239,14 @@ def translate_claude(event, state):
     elif kind == "stream_event":
         ev = event.get("event", {})
         if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-            yield {"type": "text", "delta": ev["delta"].get("text", "")}
+            yield from answer_text(ev["delta"].get("text", ""), state)
         elif ev.get("type") == "message_start":
             yield {"type": "turn"}
     elif kind == "assistant":
         for block in event.get("message", {}).get("content", []):
             if block.get("type") == "tool_use":
+                if block.get("name", "").endswith("cite_sources"):
+                    state["cited"] = True
                 yield {"type": "tool", "id": block.get("id"), "name": block.get("name", "").removeprefix("mcp__innerrag__"),
                        "input": block.get("input", {})}
     elif kind == "user":
@@ -234,6 +256,7 @@ def translate_claude(event, state):
                 yield {"type": "tool_result", "id": block.get("tool_use_id"),
                        "text": tool_result_text(block.get("content")), "is_error": bool(block.get("is_error"))}
     elif kind == "result":
+        yield from held_answer(state)
         usage = event.get("usage", {})
         yield {
             "type": "done",
@@ -254,14 +277,7 @@ def translate_copilot(event, state):
     kind = event.get("type")
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     if kind == "assistant.message_delta":
-        delta = data.get("deltaContent", "")
-        # After reporting its sources, Copilot tends to repeat the whole answer: hold that text
-        # back and only pass it on at the end if it is new.
-        if state.get("cited"):
-            state["after"] = state.get("after", "") + delta
-        else:
-            state["said"] = state.get("said", "") + delta
-            yield {"type": "text", "delta": delta}
+        yield from answer_text(data.get("deltaContent", ""), state)
     elif kind == "assistant.turn_start":
         state["turns"] = state.get("turns", 0) + 1
         yield {"type": "turn"}
@@ -280,10 +296,7 @@ def translate_copilot(event, state):
     elif kind == "session.error":
         state["error"] = data.get("message") or "Copilot error"
     elif kind == "result":
-        after = state.get("after", "").strip()
-        said = " ".join(state.get("said", "").split())
-        if after and " ".join(after.split())[:80] not in said:
-            yield {"type": "text", "delta": ("\n\n" if said else "") + after}
+        yield from held_answer(state)
         usage = event.get("usage") or {}
         error = state.get("error")
         yield {

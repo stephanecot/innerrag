@@ -163,6 +163,7 @@ pub fn extract(filename: &str, bytes: &[u8]) -> Result<(Format, Extracted)> {
             let html = String::from_utf8_lossy(bytes);
             let mut images = Vec::new();
             let text = html_markdown(main_region(&html), Some(&mut images));
+            caption_from_following(&text, &mut images);
             Extracted { title: html_title(&html), text, images, ..Default::default() }
         }
         Format::Markdown | Format::Text => {
@@ -418,6 +419,24 @@ fn tag_attr(raw: &str, name: &str) -> Option<String> {
         return Some(decode_entities(value));
     }
     None
+}
+
+/// On a web page, an image without alt text is usually followed by what it illustrates (a card's
+/// title, a figure's legend): that short line becomes its caption.
+fn caption_from_following(text: &str, images: &mut [ExtractedImage]) {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    for (i, line) in lines.iter().enumerate() {
+        let Some(n) = line.strip_prefix(IMAGE_MARKER).and_then(|r| r.strip_suffix("-->")).and_then(|v| v.trim().parse::<usize>().ok()) else {
+            continue;
+        };
+        let Some(image) = images.get_mut(n).filter(|img| img.alt.is_none()) else { continue };
+        if let Some(next) = lines.get(i + 1).filter(|l| !l.starts_with(IMAGE_MARKER)) {
+            let caption = next.trim_start_matches(['#', '-', ' ']).trim();
+            if (8..=160).contains(&caption.chars().count()) {
+                image.alt = Some(caption.to_string());
+            }
+        }
+    }
 }
 
 /// Bytes of a `data:image/…;base64,…` address.
