@@ -60,7 +60,6 @@ const SHOTS = [
     act: `await type("#chat-input", "Quel rapport entre ACTION_MOVE et ACTION_UP ?"); await press("Enter"); await waitFor(() => document.querySelector(".chat-meta"), 120000); await sleep(800); window.scrollTo(0, 0);`,
   },
   { name: "lacunes", project: "sample", route: "#/lacunes", wait: 3000 },
-  { name: "code", project: "innerrag-docs", route: "#/code", wait: 4000 },
   { name: "mcp", project: "sample", route: "#/mcp?tool=search_knowledge", wait: 2000 },
   { name: "historique", project: "sample", route: "#/historique", wait: 2500 },
 ].filter((s) => !ONLY || ONLY.has(s.name));

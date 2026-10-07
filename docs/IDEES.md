@@ -62,6 +62,8 @@ Un fichier `.lbdb` binaire versionné dans git ne se fusionne pas. Si deux perso
 
 ### 6. Pont entre la doc et le code, avec détection de dérive (effort M)
 
+**Essayé puis retiré le 7 octobre 2026** : implémenté (page « Doc et code », outils `docs_for` et `doc_drift`), puis enlevé à la demande de l'utilisateur, qui ne le jugeait pas adapté à son usage. Le code reste dans l'historique git (commit 61635bf et suivants).
+
 - **Problème** : pour une équipe qui code avec Claude Code, c'est surtout sur le code que la doc devient fausse.
 - **Comment** :
   - on extrait de la doc les éléments de code (texte entre backticks, noms en CamelCase, chemins, routes `GET /route`, variables d'environnement, options de CLI) comme entités `Symbol` ;

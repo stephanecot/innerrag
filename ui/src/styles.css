@@ -576,19 +576,6 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .empty-line { color: var(--ink-soft); font-size: 14px; padding: 8px 0; }
 .gaps-totals > div { flex: 0 0 auto; padding: 0 18px; }
 
-/* ---- Documentation and code ---- */
-.code-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
-.code-totals { margin-left: auto; }
-.code-totals > div { flex: 0 0 auto; padding: 0 18px; }
-.drift-doc { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--rule-soft); }
-.drift-doc h3 { font-size: 16px; }
-.drift-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.drift-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 14px; padding: 3px 0; }
-.drift-list code { background: var(--sunken); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
-.drift-kind { font-size: 12.5px; color: var(--ink-soft); }
-.drift-kind.missing { color: var(--danger); font-weight: 600; }
-.drift-where { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; font-size: 13px; }
-.docs-for { display: flex; flex-direction: column; gap: 8px; }
 
 /* ---- Document type icons ---- */
 .title-with-type { display: inline-flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; }

@@ -1,7 +1,6 @@
 mod api;
 mod cache;
 mod chunk;
-mod code;
 mod config;
 mod context;
 mod db;

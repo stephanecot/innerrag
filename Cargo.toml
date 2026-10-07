@@ -29,7 +29,6 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 quick-xml = "0.37"
 base64 = "0.23"
 rust-stemmers = "1.2.0"
-regex = "1"
 
 [profile.release]
 lto = "thin"

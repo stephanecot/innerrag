@@ -997,7 +997,6 @@ dependencies = [
  "orp",
  "ort",
  "quick-xml",
- "regex",
  "rust-stemmers",
  "serde",
  "serde_json",

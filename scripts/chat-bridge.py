@@ -39,8 +39,6 @@ READ_TOOLS = [
     "cite_sources",
     "explore_entity",
     "explore_relation",
-    "docs_for",
-    "doc_drift",
     "list_documents",
     "graph_stats",
     "run_cypher",

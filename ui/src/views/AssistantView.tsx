@@ -85,10 +85,6 @@ function toolLabel(t: T, name: string, input: Record<string, unknown>): string {
       return t("tool.relation", { a: quote(input.a), b: quote(input.b) });
     case "list_documents":
       return t("tool.listDocs");
-    case "docs_for":
-      return t("tool.docsFor", { q: quote(input.target) });
-    case "doc_drift":
-      return t("tool.drift");
     case "read_passages":
       return (Array.isArray(input.ids) ? t("tool.read", { n: input.ids.length }) : t("tool.readSome")) + (input.window ? t("tool.withContext") : "");
     case "cite_sources":

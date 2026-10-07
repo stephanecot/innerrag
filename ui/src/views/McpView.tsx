@@ -5,7 +5,7 @@ import { useT, type Key, type T } from "../i18n";
 
 /** Tools with a plain-words guide (mcp.guide.<tool>.short/what/when). The server's own (English) description is what agents read. */
 const GUIDED = new Set([
-  "search_knowledge", "read_passages", "cite_sources", "docs_for", "doc_drift", "explore_entity", "explore_relation",
+  "search_knowledge", "read_passages", "cite_sources", "explore_entity", "explore_relation",
   "graph_stats", "run_cypher", "list_documents", "ingest_document", "ingest_file", "ingestion_status", "list_projects",
 ]);
 
@@ -22,7 +22,6 @@ const GROUPS: { title: Key; intro?: Key; tools: string[] }[] = [
     intro: "mcp.group.graphIntro",
     tools: ["explore_entity", "explore_relation", "graph_stats", "run_cypher"],
   },
-  { title: "mcp.group.code", intro: "mcp.group.codeIntro", tools: ["docs_for", "doc_drift"] },
   {
     title: "mcp.group.docs",
     intro: "mcp.group.docsIntro",
