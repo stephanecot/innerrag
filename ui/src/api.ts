@@ -11,6 +11,7 @@ export interface Project {
   embedding_dim: number;
   size_bytes: number;
   watch_dir?: string;
+  code_dir?: string;
   watch?: { files: number; last_scan: number | null; last_error: string | null };
 }
 
@@ -290,7 +291,7 @@ export const api = {
   projects: () => request<Project[]>("/api/projects"),
   createProject: (body: { id: string; title?: string; description?: string }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
-  updateProject: (id: string, body: { title?: string; description?: string; watch_dir?: string }) =>
+  updateProject: (id: string, body: { title?: string; description?: string; watch_dir?: string; code_dir?: string }) =>
     request<Project>(`/api/projects/${enc(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: "DELETE" }),
   scanWatch: (id: string) =>
@@ -339,6 +340,8 @@ export const api = {
         request<SearchResponse>(`${base}/search`, { method: "POST", body: JSON.stringify(body) }),
       eval: () => request<EvalSet>(`${base}/eval`),
       feedback: () => request<FeedbackReport>(`${base}/feedback`),
+      codeDrift: () => request<CodeDrift>(`${base}/code`),
+      docsFor: (target: string) => request<DocsFor>(`${base}/code/docs${qs({ target })}`),
       dismissFeedback: (key: string) => request<void>(`${base}/feedback/dismiss`, { method: "POST", body: JSON.stringify({ key }) }),
       acceptFeedback: (key: string, out_of_scope = false) =>
         request<EvalSet>(`${base}/feedback/accept`, { method: "POST", body: JSON.stringify({ key, out_of_scope }) }),
@@ -379,6 +382,32 @@ export interface FeedbackReport {
   citations: number;
   gaps: Gap[];
   proposals: Proposal[];
+}
+
+export type CodeKind = "path" | "route" | "env_var" | "flag" | "symbol";
+
+export interface DocSymbol {
+  symbol: string;
+  kind: CodeKind;
+  found: boolean;
+  locations: string[];
+  mentions: { chunk_id: string; doc_id: string; doc_title: string; page: number | null }[];
+}
+
+export interface CodeDrift {
+  code_dir: string;
+  files: number;
+  symbols: number;
+  found: number;
+  missing: DocSymbol[];
+  by_kind: [CodeKind, number, number][];
+}
+
+export interface DocsFor {
+  target: string;
+  files: string[];
+  looked_for: string[];
+  symbols: DocSymbol[];
 }
 
 export interface McpTool {

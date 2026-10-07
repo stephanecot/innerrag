@@ -120,6 +120,8 @@ pub fn router(state: Shared) -> Router {
         .route("/eval", get(get_eval).put(put_eval))
         .route("/eval/run", post(run_eval))
         .route("/passages", post(read_passages))
+        .route("/code", get(code_drift))
+        .route("/code/docs", get(code_docs))
         .route("/feedback", get(get_feedback))
         .route("/feedback/cite", post(cite_feedback))
         .route("/feedback/dismiss", post(dismiss_feedback))
@@ -206,6 +208,8 @@ struct ProjectBody {
     description: Option<String>,
     /// Folder under the watch root to keep in sync; "" stops following.
     watch_dir: Option<String>,
+    /// Code repository under the watch root to check the documentation against; "" clears it.
+    code_dir: Option<String>,
 }
 
 async fn list_projects(State(state): State<Shared>) -> ApiResult<Vec<projects::ProjectInfo>> {
@@ -232,11 +236,12 @@ async fn update_project(
 ) -> ApiResult<projects::ProjectInfo> {
     Ok(Json(
         blocking(&state, move |s| {
-            if let Some(dir) = body.watch_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+            for dir in [&body.watch_dir, &body.code_dir].into_iter().flatten().filter(|d| !d.trim().is_empty()) {
                 crate::watch::resolve(&s.config.watch_root, dir.trim())?;
             }
-            let info = s.projects.update(&project, body.title, body.description, body.watch_dir)?;
-            if info.meta.watch_dir.is_some() {
+            let rescan = body.watch_dir.is_some();
+            let info = s.projects.update(&project, body.title, body.description, body.watch_dir, body.code_dir)?;
+            if rescan && info.meta.watch_dir.is_some() {
                 crate::watch::scan(s, &project)?;
                 return s.projects.info(&project);
             }
@@ -653,6 +658,23 @@ async fn search_handler(
         })
         .await?,
     ))
+}
+
+async fn code_drift(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::code::Drift> {
+    Ok(Json(in_project(&state, project.clone(), move |s, g| crate::code::drift(s, &project, g)).await?))
+}
+
+#[derive(Deserialize)]
+struct DocsForQuery {
+    target: String,
+}
+
+async fn code_docs(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Query(q): Query<DocsForQuery>,
+) -> ApiResult<crate::code::DocsFor> {
+    Ok(Json(in_project(&state, project.clone(), move |s, g| crate::code::docs_for(s, &project, g, &q.target)).await?))
 }
 
 #[derive(Deserialize)]

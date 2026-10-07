@@ -84,6 +84,10 @@ function toolLabel(name: string, input: Record<string, unknown>): string {
       return `Examine le lien${quote(input.a)} et${quote(input.b)}`;
     case "list_documents":
       return "Liste les documents";
+    case "docs_for":
+      return `Cherche la doc de${quote(input.target)}`;
+    case "doc_drift":
+      return "Cherche la doc périmée";
     case "read_passages":
       return `Lit ${Array.isArray(input.ids) ? input.ids.length : ""} passage${Array.isArray(input.ids) && input.ids.length > 1 ? "s" : ""}${input.window ? " avec leur contexte" : ""}`;
     case "cite_sources":

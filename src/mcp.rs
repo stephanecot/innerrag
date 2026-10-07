@@ -174,6 +174,25 @@ fn tools(with_project_arg: bool) -> Value {
             }
         },
         {
+            "name": "docs_for",
+            "description": "Documentation passages about a file or a code symbol of the project's repository (a path like src/api.rs, or a name like search_knowledge or HttpClient). Call it before changing a file or a symbol, to know what the documentation says about it and what will need updating.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "target": { "type": "string", "description": "File path (relative to the repository) or symbol name." } },
+                "required": ["target"]
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "doc_drift",
+            "description": "Code elements the documentation names (between backticks: symbols, file paths, routes, environment variables, CLI flags) that no longer exist in the project's repository, with the passages that name them. Use it to find outdated documentation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum elements listed (default 40)." } }
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "explore_entity",
             "description": "Shows an entity of the knowledge graph: the entities it co-occurs with (strongest first) and the passages that mention it.",
             "inputSchema": {
@@ -411,6 +430,7 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
         ),
         "run_cypher" => args.get("query").and_then(Value::as_str).unwrap_or_default().to_string(),
         "read_passages" => arg_strings(args, "ids").unwrap_or_default().join(", "),
+        "docs_for" => args.get("target").and_then(Value::as_str).unwrap_or_default().to_string(),
         "cite_sources" => format!(
             "{} ({})",
             args.get("question").and_then(Value::as_str).unwrap_or_default(),
@@ -425,6 +445,7 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
         "graph_stats" => "stats",
         "run_cypher" => "cypher",
         "read_passages" => "read",
+        "docs_for" | "doc_drift" => "code",
         "cite_sources" => "cite",
         _ => "unknown",
     };
@@ -469,6 +490,52 @@ fn run_tool(
             let mut out = context::render(state, project, &res, &opts)?;
             if !res.chunks.is_empty() {
                 out.push_str("\nWhen you have answered, report the passage ids you used with cite_sources.\n");
+            }
+            Ok(out)
+        }
+        "docs_for" => {
+            let target = arg_str(args, "target")?;
+            let found = crate::code::docs_for(state, project, graph, &target)?;
+            *result_line = count(found.symbols.iter().map(|s| s.mentions.len()).sum(), "passage", "passages");
+            let mut out = String::new();
+            if !found.files.is_empty() {
+                let _ = writeln!(out, "Files matching `{target}`: {}", found.files.join(", "));
+            }
+            if found.symbols.is_empty() {
+                let _ = writeln!(out, "No documentation passage names `{target}` or what it defines (looked for: {}).", found.looked_for.join(", "));
+                return Ok(out);
+            }
+            let _ = writeln!(out, "Documentation naming `{target}` or what it defines:\n");
+            for s in &found.symbols {
+                let status = if s.found { "exists in code" } else { "NOT FOUND in code" };
+                let _ = writeln!(out, "## `{}` ({:?}, {status})", s.symbol, s.kind);
+                for m in &s.mentions {
+                    let page = m.page.map(|p| format!(", page {p}")).unwrap_or_default();
+                    let _ = writeln!(out, "- {}{page}: passage `{}`", m.doc_title, m.chunk_id);
+                }
+            }
+            out.push_str("\nRead the passages with read_passages(ids) before changing the code, and update them if they become wrong.\n");
+            Ok(out)
+        }
+        "doc_drift" => {
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(40).clamp(1, 200) as usize;
+            let d = crate::code::drift(state, project, graph)?;
+            *result_line = count(d.missing.len(), "élément absent", "éléments absents");
+            let mut out = format!(
+                "Code folder {} ({} files). The documentation names {} code elements; {} exist, {} are missing from the code.\n\n",
+                d.code_dir, d.files, d.symbols, d.found, d.missing.len()
+            );
+            for s in d.missing.iter().take(limit) {
+                let places: Vec<String> = s
+                    .mentions
+                    .iter()
+                    .take(4)
+                    .map(|m| format!("{}{} (`{}`)", m.doc_title, m.page.map(|p| format!(" p.{p}")).unwrap_or_default(), m.chunk_id))
+                    .collect();
+                let _ = writeln!(out, "- `{}` ({:?}): {}", s.symbol, s.kind, places.join("; "));
+            }
+            if d.missing.len() > limit {
+                let _ = writeln!(out, "\n{} more; raise limit to see them.", d.missing.len() - limit);
             }
             Ok(out)
         }

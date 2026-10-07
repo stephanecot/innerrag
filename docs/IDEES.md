@@ -107,6 +107,15 @@ Un fichier `.lbdb` binaire versionné dans git ne se fusionne pas. Si deux perso
   - un regroupement en communautés (Leiden) fait ressortir les thèmes, avec des étiquettes extraites du texte. L'agent peut enregistrer un résumé de thème via l'idée 4.
 - **Risque** : le bruit de la co-occurrence rend certains chemins absurdes. L'idée gagne en valeur une fois l'idée 9 en place.
 
+### 11. Cache des recherches (effort S, proposé par l'utilisateur)
+
+- **Problème** : une recherche prend environ 450 ms sur CPU, mesurés le 7 octobre 2026 sur le livre (2 448 passages, 8 cœurs). Le reclassement par cross-encoder en prend environ 360, l'extraction d'entités de la question environ 70, le reste environ 15. Les agents répètent souvent la même recherche : nouvel essai, mode map puis full, même question posée par plusieurs personnes.
+- **Comment** :
+  - cache des réponses par projet, avec pour clé la question normalisée et les paramètres, invalidé par un numéro de version du projet incrémenté à chaque ingestion ou suppression. Une recherche répétée répond en environ 1 ms ;
+  - cache des scores du cross-encoder par couple (question, passage), pour que changer k, budget ou mode ne relance pas la partie coûteuse ;
+  - cache des embeddings et des entités de la question (LRU).
+- **Risque** : faible, grâce à l'invalidation par version. Il faut borner la mémoire (LRU) et indiquer dans la réponse et dans l'historique qu'elle vient du cache.
+
 ## Les trois à faire en premier, selon le sous-agent
 
 1. **Boucle de citation (1)** : peu chère, elle fournit les données pour tout le reste. Le jeu de référence grossit seul, le seuil se recalibre sur l'usage réel et la page des lacunes sert tout de suite aux rédacteurs.

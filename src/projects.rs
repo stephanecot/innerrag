@@ -28,6 +28,9 @@ pub struct ProjectMeta {
     /// Folder (under the watch root) whose files are kept in sync with the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch_dir: Option<String>,
+    /// Code repository (under the watch root) the documentation is checked against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +119,7 @@ impl Projects {
                 embedding_model: self.embedding_model.clone(),
                 embedding_dim: self.dim,
                 watch_dir: None,
+                code_dir: None,
             };
             self.write_meta(id, &meta)?;
             return Ok(meta);
@@ -170,6 +174,7 @@ impl Projects {
             embedding_model: self.embedding_model.clone(),
             embedding_dim: self.dim,
             watch_dir: None,
+            code_dir: None,
         };
         self.write_meta(id, &meta)?;
         std::fs::write(dir.join(".gitignore"), GITIGNORE)?;
@@ -177,15 +182,19 @@ impl Projects {
         self.info(id)
     }
 
-    /// `watch_dir`: `Some("")` stops following a folder.
+    /// `watch_dir` / `code_dir`: `Some("")` clears the folder.
     pub fn update(
         &self,
         id: &str,
         title: Option<String>,
         description: Option<String>,
         watch_dir: Option<String>,
+        code_dir: Option<String>,
     ) -> Result<ProjectInfo> {
         let mut meta = self.info(id)?.meta;
+        if let Some(dir) = code_dir {
+            meta.code_dir = Some(dir.trim().to_string()).filter(|d| !d.is_empty());
+        }
         if let Some(dir) = watch_dir {
             meta.watch_dir = Some(dir.trim().to_string()).filter(|d| !d.is_empty());
         }

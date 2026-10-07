@@ -20,6 +20,16 @@ const GUIDE: Record<string, { short: string; what: string; when: string }> = {
     what: "L'agent indique, une fois sa réponse écrite, les passages sur lesquels elle repose, ou que la base ne répondait pas. Cela alimente la page Lacunes et propose des questions pour le jeu d'évaluation ; les documents ne changent pas.",
     when: "À la fin de chaque réponse tirée de la base.",
   },
+  docs_for: {
+    short: "Doc à relire avant de toucher au code",
+    what: "Les passages de la documentation qui citent un fichier du dépôt, ou un symbole, et ce que ce fichier définit. Indique aussi si chaque élément cité existe encore dans le code.",
+    when: "Avant de modifier un fichier ou une fonction, pour savoir quelle documentation mettre à jour.",
+  },
+  doc_drift: {
+    short: "Doc qui cite du code disparu",
+    what: "Les éléments de code cités par la documentation (symboles, fichiers, routes, variables d'environnement, options) qui n'existent plus dans le dépôt, avec les passages qui les citent.",
+    when: "Pour repérer la documentation périmée, par exemple après un refactoring.",
+  },
   explore_entity: {
     short: "Voisins et passages d'une entité",
     what: "La fiche d'une entité : les entités qui apparaissent avec elle, les plus liées d'abord, et les passages qui la citent.",
@@ -74,6 +84,7 @@ const GROUPS: { title: string; intro: string; tools: string[] }[] = [
     intro: "Pour suivre les liens entre entités au-delà des passages trouvés.",
     tools: ["explore_entity", "explore_relation", "graph_stats", "run_cypher"],
   },
+  { title: "Documentation et code", intro: "Quand le projet a un dépôt de code associé.", tools: ["docs_for", "doc_drift"] },
   {
     title: "Gérer les documents",
     intro: "Lister la base, et l'alimenter depuis l'agent.",

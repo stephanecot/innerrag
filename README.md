@@ -153,6 +153,15 @@ Boucle de citation : une fois sa réponse écrite, l'agent appelle `cite_sources
 claude mcp add --transport http innerrag http://localhost:8080/mcp/mon-projet
 ```
 
+## Documentation et code
+
+Un projet peut être associé à un dépôt de code, monté sous `/watch` (`-v ./mon-depot:/watch/mon-depot:ro`, puis « Dépôt de code » dans la page « Doc et code », ou `PATCH /api/projects/{p}` avec `code_dir`).
+
+- Les éléments de code que les passages publiés citent entre accents graves sont reconnus : symboles (`HttpClient`, `search_knowledge`, `cancel()`), fichiers (`src/api.rs`), routes (`GET /api/health`), variables d'environnement (`INNERRAG_DATA`), options (`--allow-writes`).
+- Le dépôt est indexé (identifiants, définitions, fichiers, routes, options ; index gardé une minute) et chaque élément est marqué présent ou absent.
+- `doc_drift` (MCP) et la page listent les éléments absents du code, par document : la documentation à revoir.
+- `docs_for(fichier | symbole)` (MCP, `GET /api/projects/{p}/code/docs?target=`) donne les passages à relire avant de modifier un fichier ou un symbole, y compris ceux qui citent ce que le fichier définit.
+
 ## Assistant (Claude Code local, sans clé d'API)
 
 La page « Assistant » de l'interface discute avec le Claude Code de votre poste, branché sur le MCP du projet ouvert. Le serveur tourne dans Docker et ne peut pas lancer ce Claude Code : un petit pont, sans dépendance, fait le lien sur la machine hôte.
