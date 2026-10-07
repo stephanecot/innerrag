@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server:
+    name: Server (Rust tests)
+    runs-on: ubuntu-latest
+    # trixie: LadybugDB headers need GCC >= 13
+    container: rust:1-trixie
+    env:
+      LBUG_VERSION: "0.21.2"
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends cmake libssl-dev pkg-config poppler-utils catdoc
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            target
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Tests
+        run: cargo test --release --locked
+      - name: Build
+        run: cargo build --release --locked
+
+  ui:
+    name: UI (type-check and build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  tooling:
+    name: Plugin and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plugin CLI compiles
+        run: python3 -m py_compile plugins/innerrag/scripts/innerrag.py
+      - name: Plugin manifests are valid JSON
+        run: |
+          for f in .claude-plugin/marketplace.json plugins/innerrag/.claude-plugin/plugin.json plugins/innerrag/.mcp.json; do
+            python3 -m json.tool "$f" > /dev/null
+          done
+      - name: Build scripts parse
+        run: |
+          bash -n scripts/build.sh
+          pwsh -NoProfile -Command '$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/build.ps1",[ref]$null,[ref]$e); if ($e) { $e; exit 1 }'
+      - name: Compose file is valid
+        run: docker compose config -q
+
+  image:
+    name: Docker image (CPU)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [server, ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: cpu
+          load: true
+          tags: innerrag:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test (offline start, health, ingestion, search)
+        run: |
+          docker run -d --name smoke --network none innerrag:ci
+          for i in $(seq 1 60); do docker exec smoke curl -fsS localhost:8080/api/health && break; sleep 2; done
+          docker exec smoke sh -c 'curl -fsS -X POST "localhost:8080/api/projects/default/documents?wait=true" -H "content-type: application/json" -d "{\"title\":\"Test\",\"text\":\"Marie Curie travaille à Paris avec Pierre Curie.\"}"'
+          docker exec smoke sh -c 'curl -fsS -X POST localhost:8080/api/projects/default/search -H "content-type: application/json" -d "{\"query\":\"Où travaille Marie Curie ?\"}"' | grep -q '"chunks":\[{'
