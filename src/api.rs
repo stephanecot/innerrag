@@ -122,7 +122,7 @@ pub fn router(state: Shared) -> Router {
         .route("/cypher", post(cypher));
     let api = Router::new()
         .route("/config", get(config))
-        .route("/history", get(history))
+        .route("/history", get(history).delete(clear_history))
         .route("/jobs", get(list_jobs))
         .route("/jobs/{id}", get(get_job).delete(cancel_job))
         .route("/projects", get(list_projects).post(create_project))
@@ -178,6 +178,18 @@ async fn config(State(state): State<Shared>) -> Json<serde_json::Value> {
 
 async fn history(State(state): State<Shared>, Query(filter): Query<HistoryFilter>) -> Json<HistoryView> {
     Json(state.history.query(&filter))
+}
+
+#[derive(Deserialize)]
+struct ClearHistory {
+    /// Only this project's calls; every call when absent.
+    #[serde(default)]
+    project: String,
+}
+
+async fn clear_history(State(state): State<Shared>, Query(q): Query<ClearHistory>) -> ApiResult<serde_json::Value> {
+    let removed = state.history.clear(&q.project)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 // ---- Projects -------------------------------------------------------------------

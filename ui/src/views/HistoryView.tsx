@@ -18,6 +18,8 @@ export default function HistoryView({ projects, current }: { projects: Project[]
   const PAGE = 50;
   const [data, setData] = useState<History | null>(null);
   const [error, setError] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +62,7 @@ export default function HistoryView({ projects, current }: { projects: Project[]
       </div>
 
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {notice && <div className="success" role="status">{notice}</div>}
 
       {data && (
         <section className="panel" aria-label="Consommation" style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -116,6 +119,36 @@ export default function HistoryView({ projects, current }: { projects: Project[]
           <input type="checkbox" checked={errors} onChange={(e) => setErrors(e.target.checked)} />
           Erreurs seulement
         </label>
+        <span style={{ flex: 1 }} />
+        {confirmClear ? (
+          <>
+            <span className="danger-text" style={{ fontSize: 14 }}>
+              {project ? `Effacer tous les appels du projet ${project}, toutes périodes confondues ?` : "Effacer tout l'historique, tous projets confondus ?"}
+            </span>
+            <button type="button" className="btn" onClick={() => setConfirmClear(false)}>Annuler</button>
+            <button
+              type="button"
+              className="btn btn-danger-solid"
+              onClick={async () => {
+                try {
+                  const r = await api.clearHistory(project);
+                  setNotice(`${num(r.removed)} appels effacés.`);
+                  setConfirmClear(false);
+                  setOffset(0);
+                  load();
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              Effacer
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn btn-danger" onClick={() => { setNotice(""); setConfirmClear(true); }}>
+            {project ? "Vider l'historique du projet" : "Vider l'historique"}
+          </button>
+        )}
       </div>
 
       {data && data.totals.calls > PAGE && (

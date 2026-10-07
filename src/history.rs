@@ -94,6 +94,33 @@ impl History {
         Ok(())
     }
 
+    /// Forgets the calls of one project, or every call (with the rotated files) when `project`
+    /// is empty. Returns how many calls were removed from the visible history.
+    pub fn clear(&self, project: &str) -> Result<usize> {
+        let mut recent = self.recent.lock().map_err(|_| anyhow::anyhow!("history lock poisoned"))?;
+        let before = recent.len();
+        if project.is_empty() {
+            recent.clear();
+            if let Some(dir) = self.path.parent() {
+                for entry in std::fs::read_dir(dir)?.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with("calls-") && name.ends_with(".jsonl") {
+                        std::fs::remove_file(entry.path())?;
+                    }
+                }
+            }
+        } else {
+            recent.retain(|r| r.project != project);
+        }
+        let mut lines = String::new();
+        for rec in recent.iter() {
+            lines.push_str(&serde_json::to_string(rec)?);
+            lines.push('\n');
+        }
+        std::fs::write(&self.path, lines)?;
+        Ok(before - recent.len())
+    }
+
     pub fn query(&self, filter: &HistoryFilter) -> HistoryView {
         let since = now_ms() - (filter.hours.unwrap_or(24).clamp(1, 24 * 90) as i64) * 3_600_000;
         let recent = self.recent.lock().map(|r| r.clone()).unwrap_or_default();

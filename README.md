@@ -156,8 +156,9 @@ py scripts\chat-bridge.py                # Windows
 - Chaque message lance `claude -p` avec le seul serveur MCP innerrag (`--strict-mcp-config`), sans outils intégrés (ni terminal, ni fichiers) et sans les outils d'ingestion, sauf avec `--allow-writes`.
 - `ANTHROPIC_API_KEY` et `ANTHROPIC_AUTH_TOKEN` sont retirés de l'environnement : Claude Code utilise le compte avec lequel vous êtes connecté, et les messages comptent dans cet abonnement.
 - Le pont écoute sur `127.0.0.1:18765` et ne répond qu'aux pages de l'interface (contrôle de l'en-tête `Origin`).
-- Les conversations reprennent la session Claude Code (`--resume`) ; les appels MCP apparaissent dans l'historique.
-- Options : `--innerrag http://localhost:18080`, `--port`, `--model sonnet`, `--allow-writes`.
+- Les conversations reprennent la session Claude Code (`--resume`) et restent dans le navigateur, par projet ; les appels MCP apparaissent dans l'historique.
+- Dans la page : choix du modèle (Opus, Sonnet, Haiku, ou celui de Claude Code) et interrupteur « Documents seulement », actif par défaut : Claude ne répond qu'à partir des passages trouvés et dit quand la base ne couvre pas la question. Désactivé, il peut compléter dans une partie « Hors documents ».
+- Options du pont : `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (modèle par défaut), `--allow-writes`.
 
 ## Plugin Claude Code (skills)
 

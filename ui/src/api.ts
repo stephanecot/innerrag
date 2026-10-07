@@ -284,6 +284,8 @@ export const api = {
   cancelJob: (id: string) => request<void>(`/api/jobs/${enc(id)}`, { method: "DELETE" }),
   history: (p: { hours?: number; channel?: string; operation?: string; project?: string; errors?: boolean; offset?: number; limit?: number }) =>
     request<HistoryView>(`/api/history${qs(p)}`),
+  /** Forgets the calls of one project, or all of them when `project` is empty. */
+  clearHistory: (project: string) => request<{ removed: number }>(`/api/history${qs({ project })}`, { method: "DELETE" }),
 
   projects: () => request<Project[]>("/api/projects"),
   createProject: (body: { id: string; title?: string; description?: string }) =>

@@ -48,12 +48,25 @@ PROJECT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")
 MAX_MESSAGE = 20_000
 
+MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,63}$")
+
 SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`.
-Answer from that base: call the innerrag tools (search_knowledge first, explore_entity and
-explore_relation to follow the graph) before answering, and say so plainly when the base does
-not contain the answer instead of answering from general knowledge. Cite your sources as
-"document title, page N" when the passage gives a page. Keep answers short and structured,
-in Markdown, in the language of the question."""
+Call the innerrag tools (search_knowledge first, explore_entity and explore_relation to follow
+the graph) before answering. Cite your sources as "document title, page N" when the passage
+gives a page. Keep answers short and structured, in Markdown, in the language of the question.
+{grounding}"""
+
+# Default: the answer must come from the documents only.
+STRICT = """Answer ONLY from the passages returned by the innerrag tools. Never add facts, code,
+names, numbers or advice from your own knowledge, even if you are sure of them, and never fill a
+gap by guessing. Every statement must be backed by a cited passage. If the tools return nothing
+relevant, or only part of the answer, say plainly that the documents do not cover it (or which
+part they do not cover) and stop there; you may suggest other wordings to search for."""
+
+OPEN = """Base your answer on the passages returned by the innerrag tools first. You may complete
+it with your general knowledge when the documents fall short, but put that part after the
+documented answer, under a line starting with "Hors documents :", and never present it as coming
+from the base."""
 
 
 def origin_of(url):
@@ -93,7 +106,7 @@ class Bridge:
         self.allowed = [f"mcp__innerrag__{t}" for t in tools]
         self.denied = [] if args.allow_writes else [f"mcp__innerrag__{t}" for t in WRITE_TOOLS]
 
-    def command(self, project, session):
+    def command(self, project, session, model=None, strict=True):
         mcp = {
             "mcpServers": {
                 "innerrag": {"type": "http", "url": f"{self.args.innerrag.rstrip('/')}/mcp/{project}"}
@@ -106,12 +119,13 @@ class Bridge:
             "--mcp-config", json.dumps(mcp), "--strict-mcp-config",
             "--allowedTools", ",".join(self.allowed),
             "--setting-sources", "",
-            "--append-system-prompt", SYSTEM_PROMPT.format(project=project),
+            "--append-system-prompt", SYSTEM_PROMPT.format(project=project, grounding=STRICT if strict else OPEN),
         ]
         if self.denied:
             cmd += ["--disallowedTools", ",".join(self.denied)]
-        if self.args.model:
-            cmd += ["--model", self.args.model]
+        model = model or self.args.model
+        if model:
+            cmd += ["--model", model]
         if session:
             cmd += ["--resume", session]
         return cmd
@@ -245,11 +259,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(400, {"error": f"the message must have 1 to {MAX_MESSAGE} characters"})
         if session is not None and not SESSION_ID.match(str(session)):
             return self.json(400, {"error": "invalid session id"})
+        model = body.get("model") or None
+        if model is not None and not MODEL.match(str(model)):
+            return self.json(400, {"error": "invalid model name"})
+        strict = body.get("strict", True) is not False
         if self.bridge.version is None:
             return self.json(503, {"error": f"`{self.bridge.args.claude}` not found or not working on this machine"})
-        self.stream(project, message, session)
+        self.stream(project, message, session, model, strict)
 
-    def stream(self, project, message, session):
+    def stream(self, project, message, session, model, strict):
         self.send_response(200)
         self.cors()
         self.send_header("Content-Type", "application/x-ndjson")
@@ -258,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
-        cmd = self.bridge.command(project, session)
+        cmd = self.bridge.command(project, session, model, strict)
         try:
             proc = subprocess.Popen(
                 cmd, cwd=self.bridge.workdir, env=self.bridge.env(), stdin=subprocess.PIPE,

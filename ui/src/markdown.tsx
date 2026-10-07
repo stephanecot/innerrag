@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 export type Block =
   | { kind: "heading"; level: number; text: string; id: string }
   | { kind: "para"; text: string }
+  | { kind: "quote"; text: string }
   | { kind: "list"; items: string[] }
   | { kind: "code"; text: string }
   | { kind: "table"; rows: string[][] }
@@ -26,13 +27,16 @@ export function parse(md: string): Block[] {
   let para: string[] = [];
   let list: string[] = [];
   let table: string[][] = [];
+  let quote: string[] = [];
   const flush = () => {
+    if (quote.length) blocks.push({ kind: "quote", text: quote.join(" ") });
     if (para.length) blocks.push({ kind: "para", text: para.join(" ") });
     if (list.length) blocks.push({ kind: "list", items: list });
     if (table.length) blocks.push({ kind: "table", rows: table });
     para = [];
     list = [];
     table = [];
+    quote = [];
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -61,6 +65,12 @@ export function parse(md: string): Block[] {
       flush();
       continue;
     }
+    if (trimmed.startsWith(">")) {
+      if (para.length || list.length || table.length) flush();
+      quote.push(trimmed.replace(/^>\s?/, ""));
+      continue;
+    }
+    if (quote.length) flush();
     const item = /^(?:[-*•]|\d+[.)])\s+(.*)$/.exec(trimmed);
     if (item) {
       if (para.length) flush();
@@ -123,6 +133,8 @@ export function Blocks({
           }
           case "para":
             return <p key={i} className="md-p">{inline(b.text, linker)}</p>;
+          case "quote":
+            return <blockquote key={i} className="md-quote">{inline(b.text, linker)}</blockquote>;
           case "list":
             return <ul key={i} className="md-list">{b.items.map((it, j) => <li key={j}>{inline(it, linker)}</li>)}</ul>;
           case "code":
