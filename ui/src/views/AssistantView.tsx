@@ -427,7 +427,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                 </ol>
               )}
               {x.parts.filter((p, k) => p.kind === "text" && !isCitationNote(x.parts, k)).map((p, j) => (
-                <div key={j} className="chat-text"><RichText text={(p as { text: string }).text} docs={citedDocs} /></div>
+                <div key={j} className="chat-text"><RichText text={(p as { text: string }).text} docs={citedDocs} project={project} /></div>
               ))}
               {x.status === "running" && (
                 <p className="chat-wait" role="status">

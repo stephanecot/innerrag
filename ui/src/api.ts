@@ -87,6 +87,7 @@ export interface EntityDetail extends EntitySummary {
   neighbours: (EntitySummary & { weight: number; strength: number })[];
   documents: EntityDocument[];
   passages: { chunk_id: string; doc_id: string; doc_title: string; doc_status: Status; idx: number; text: string; page: number | null }[];
+  images?: ImageRef[];
 }
 
 export interface GraphView {
@@ -141,6 +142,16 @@ export interface FileInfo {
   stored?: string;
 }
 
+/** A figure extracted from a document, with the passage that shows it. */
+export interface ImageRef {
+  file: string;
+  caption: string;
+  doc_id: string;
+  doc_title: string;
+  page: number | null;
+  chunk_id: string;
+}
+
 export interface SearchResponse {
   query: string;
   chunks: {
@@ -159,6 +170,7 @@ export interface SearchResponse {
     via_graph: boolean;
     via_keywords: boolean;
     entities: string[];
+    images?: ImageRef[];
   }[];
   entities: { id: string; name: string; label: string; score: number; via: "query" | "vector" | "neighbour" }[];
   relations: { source: string; target: string; weight: number }[];

@@ -10,9 +10,18 @@ export type Block =
   | { kind: "list"; items: string[] }
   | { kind: "code"; text: string }
   | { kind: "table"; rows: string[][] }
-  | { kind: "page"; page: number };
+  | { kind: "page"; page: number }
+  | { kind: "image"; alt: string; src: string };
 
 const PAGE = /^<!--\s*page\s+(\d+)\s*-->$/;
+/** A figure on its own line: `![caption](src)`. */
+const IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
+
+/** Figures extracted at ingestion are stored as `innerrag-image:<file>`, served per project. */
+export function imageUrl(project: string, src: string): string {
+  const file = src.startsWith("innerrag-image:") ? src.slice("innerrag-image:".length) : null;
+  return file ? `/api/projects/${encodeURIComponent(project)}/images/${encodeURIComponent(file)}` : src;
+}
 
 export function slug(text: string, used: Map<string, number>): string {
   const base = text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
@@ -47,6 +56,12 @@ export function parse(md: string): Block[] {
       const code: string[] = [];
       while (++i < lines.length && !lines[i].trim().startsWith("```")) code.push(lines[i]);
       blocks.push({ kind: "code", text: code.join("\n") });
+      continue;
+    }
+    const image = IMAGE.exec(trimmed);
+    if (image) {
+      flush();
+      blocks.push({ kind: "image", alt: image[1], src: image[2] });
       continue;
     }
     const page = PAGE.exec(trimmed);
@@ -122,8 +137,8 @@ export function inline(text: string, linker?: Linker, prefix = ""): ReactNode[] 
 }
 
 export function Blocks({
-  blocks, onPage, highlightPage, linker,
-}: { blocks: Block[]; onPage?: (page: number) => void; highlightPage?: number; linker?: Linker }) {
+  blocks, onPage, highlightPage, linker, project,
+}: { blocks: Block[]; onPage?: (page: number) => void; highlightPage?: number; linker?: Linker; project?: string }) {
   const t = useT();
   return (
     <>
@@ -135,6 +150,17 @@ export function Blocks({
           }
           case "para":
             return <p key={i} className="md-p">{inline(b.text, linker)}</p>;
+          case "image": {
+            // The document's own caption line often follows: no need to repeat it.
+            const next = blocks[i + 1];
+            const repeated = next?.kind === "para" && !!b.alt && next.text.startsWith(b.alt.slice(0, 30));
+            return (
+              <figure key={i} className="md-figure">
+                <img src={project ? imageUrl(project, b.src) : b.src} alt={b.alt} loading="lazy" />
+                {b.alt && !repeated && <figcaption>{b.alt}</figcaption>}
+              </figure>
+            );
+          }
           case "quote":
             return <blockquote key={i} className="md-quote">{inline(b.text, linker)}</blockquote>;
           case "list":

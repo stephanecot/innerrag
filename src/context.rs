@@ -142,6 +142,17 @@ fn best_sentences(state: &AppState, query: &str, chunks: &[&ChunkHit]) -> Result
         .collect())
 }
 
+/// Markdown image lines for an agent: the URL is relative to the innerrag server.
+fn image_lines(project: &str, images: &[crate::explore::ImageRef]) -> String {
+    images
+        .iter()
+        .map(|i| {
+            let caption = if i.caption.is_empty() { "figure".to_string() } else { i.caption.replace(['[', ']'], "") };
+            format!("![{caption}](/api/projects/{project}/images/{})\n", i.file)
+        })
+        .collect()
+}
+
 fn location(c: &ChunkHit) -> String {
     c.page.map_or_else(|| format!("passage {}", c.idx + 1), |p| format!("page {p}"))
 }
@@ -178,10 +189,23 @@ pub fn render(state: &AppState, project: &str, res: &SearchResponse, opts: &Opti
         } else {
             match opts.mode {
                 Mode::Map => format!(
-                    "- [{rank}] `{}` {}{heading} ({}, score {:.2}): {}\n",
-                    c.id, c.doc_title, location(c), c.score, sentences.get(&c.id).map_or("", String::as_str)
+                    "- [{rank}] `{}` {}{heading} ({}, score {:.2}{}): {}\n",
+                    c.id,
+                    c.doc_title,
+                    location(c),
+                    c.score,
+                    if c.images.is_empty() { String::new() } else { format!(", {} figure(s)", c.images.len()) },
+                    sentences.get(&c.id).map_or("", String::as_str)
                 ),
-                Mode::Full => format!("\n[{rank}] `{}` {} ({}, score {:.2})\n{}\n", c.id, c.doc_title, location(c), c.score, c.text),
+                Mode::Full => format!(
+                    "\n[{rank}] `{}` {} ({}, score {:.2})\n{}\n{}",
+                    c.id,
+                    c.doc_title,
+                    location(c),
+                    c.score,
+                    c.text,
+                    image_lines(project, &c.images)
+                ),
             }
         };
         if let Some(b) = budget {
@@ -195,6 +219,9 @@ pub fn render(state: &AppState, project: &str, res: &SearchResponse, opts: &Opti
         if !sent.contains(&c.id) {
             shown.push(c.id.clone());
         }
+    }
+    if res.chunks.iter().any(|c| !c.images.is_empty()) && opts.mode == Mode::Full {
+        out.push_str("\nPassages may show figures (![caption](url) lines): include the relevant ones in your answer as Markdown images, with the same URL.\n");
     }
     if left_out > 0 {
         let _ = writeln!(
@@ -252,6 +279,12 @@ pub fn read_passages(graph: &Graph, project: &str, ids: &[String], window: i64, 
             let _ = writeln!(out, "\n`{id}`{page}{marker}\n{}", as_str(&p[3]));
             sent.push(id);
         }
+        out.push('\n');
+    }
+    let figures = crate::explore::chunk_images(graph, sent.clone())?;
+    if !figures.is_empty() {
+        out.push_str("Figures of these passages (include the relevant ones in your answer as Markdown images, same URL):\n");
+        out.push_str(&image_lines(project, &figures));
         out.push('\n');
     }
     let missing: Vec<&String> = ids.iter().filter(|i| !found.contains(*i)).collect();

@@ -367,6 +367,7 @@ fn call_tool(state: &Shared, project: &str, name: &str, args: &Value) -> anyhow:
                 labels: None,
                 plain: false,
                 original: None,
+                images: Vec::new(),
             };
             return queue(state, project, req, "", wait);
         }

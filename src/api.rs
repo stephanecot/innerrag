@@ -111,6 +111,8 @@ pub fn router(state: Shared) -> Router {
         .route("/documents/{id}/content", get(document_content))
         .route("/documents/{id}/passages", get(document_passages))
         .route("/documents/{id}/file", get(document_file))
+        .route("/documents/{id}/images", get(document_images))
+        .route("/images/{file}", get(image_file))
         .route("/tags", get(tags))
         .route("/entities", get(list_entities))
         .route("/entities/{id}", get(get_entity))
@@ -484,6 +486,36 @@ async fn document_passages(
 }
 
 /// The original file, shown inline (the browser's PDF viewer honours `#page=N`).
+async fn document_images(
+    State(state): State<Shared>,
+    Path((project, id)): Path<(String, String)>,
+) -> ApiResult<Vec<explore::ImageRef>> {
+    Ok(Json(in_project(&state, project, move |_, g| explore::document_images(g, &id)).await?))
+}
+
+/// A figure extracted from a document. File names are content hashes: cached for good.
+async fn image_file(State(state): State<Shared>, Path((project, file)): Path<(String, String)>) -> Result<Response, ApiError> {
+    let path = in_project(&state, project, move |_, g| Ok(explore::image_path(g, &file)))
+        .await?
+        .ok_or_else(|| ApiError::not_found("image"))?;
+    let bytes = tokio::fs::read(&path).await.map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mime = match path.extension().and_then(|e| e.to_str()).unwrap_or_default() {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "image/webp",
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(mime)),
+            (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable")),
+            (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 async fn document_file(
     State(state): State<Shared>,
     Path((project, id)): Path<(String, String)>,

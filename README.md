@@ -18,6 +18,7 @@ A **Graph RAG** server that runs entirely on your machine. It is written in Rust
 - **Call history**, with the size of the context returned (estimated tokens), the duration and the errors.
 - **Assistant**: chat with the Claude Code installed on your computer, connected to the project's MCP server, with no API key.
 - **Gaps**: the questions the knowledge base could not answer, and the answers agents cited, proposed as reference questions.
+- **Figures**: images of PDF, Word, PowerPoint and web pages are kept with the passage they appear in, shown in the reader, the map and search, and passed to agents.
 - **Interface** in English and French.
 
 ## Overview
@@ -139,6 +140,16 @@ curl -F "file=@report.pdf" -F "tags=finance,2026" -F "status=DRAFT" \
 
 The server needs network access to the address; nothing else in innerrag does.
 
+**Figures.** Images are extracted at ingestion and kept with the passage where they appear, so they inherit its entities:
+
+- PDF: the images `pdftohtml` finds, placed by their height on the page (those entirely in a margin, such as running logos, are left out);
+- Word and PowerPoint: the pictures of the document or of each slide, with their alt text (Office's automatic descriptions are ignored);
+- web pages: the `<img>` of the main content, downloaded from their address (up to 40 per page), with their `<figcaption>`; images embedded as `data:` URIs too, including in an uploaded HTML file.
+
+Only images a browser shows (PNG, JPEG, GIF, WebP) of at least 2 KB are kept; one repeated four times or more in a document (a logo, an ornament) is dropped, and a document keeps at most 300. The caption is the alt text, else the "Figure 3: …" line that follows the image. Files go to the project's `files/images/`, named by their content (shared between documents, removed when no document shows them any more).
+
+They appear in the reader where they are in the text, under the passages of a search, in an entity's panel on the map (its figures), and in what the MCP tools return (`![caption](/api/projects/{p}/images/{file})`), which the Assistant page displays. There is no image recognition: a figure is understood through its caption and its passage.
+
 **Watched folders.** Mount a folder under `/watch` (for example a repository's `docs/`) and attach it to a project from the Projects page. Its files are imported, then kept in sync every 30 seconds; only changed passages are recomputed.
 
 ```bash
@@ -208,6 +219,7 @@ All project routes live under `/api/projects/{project}`.
 | GET | `…/documents/{id}/content` | Full text as Markdown (with `<!-- page N -->` markers for a PDF) |
 | GET | `…/documents/{id}/passages?offset=&limit=` | Indexed passages, paginated, with their page |
 | GET | `…/documents/{id}/file` | Original file (`#page=N` opens a PDF at that page) |
+| GET | `…/documents/{id}/images`, `…/images/{file}` | A document's figures; a figure's file |
 | GET | `/api/jobs?project=`, `/api/jobs/{id}` | Running and recent ingestions |
 | DELETE | `/api/jobs/{id}` | Cancel a queued or running ingestion (nothing is written) |
 | GET | `…/entities`, `…/entities/{id}?doc=` | Entities; an entity's neighbours, documents and passages (optionally from one document) |

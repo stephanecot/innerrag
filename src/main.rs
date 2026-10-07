@@ -272,6 +272,7 @@ mod repro_full {
                 labels: None,
                 plain: false,
                 original: None,
+                images: Vec::new(),
             };
             ingest::ingest(&state, &graph, req, ingest::Mode::Create, None).unwrap();
         }

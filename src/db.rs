@@ -105,6 +105,9 @@ impl Graph {
             "CREATE REL TABLE IF NOT EXISTS NEXT(FROM Chunk TO Chunk)".to_string(),
             "CREATE REL TABLE IF NOT EXISTS MENTIONS(FROM Chunk TO Entity, score DOUBLE, surface STRING)".to_string(),
             "CREATE REL TABLE IF NOT EXISTS RELATED(FROM Entity TO Entity, weight INT64)".to_string(),
+            // Figures of the documents, shown by the passage they appear in (files under files/images/).
+            "CREATE NODE TABLE IF NOT EXISTS Image(id STRING PRIMARY KEY, doc_id STRING, file STRING, caption STRING, page INT64, n INT64)".to_string(),
+            "CREATE REL TABLE IF NOT EXISTS SHOWS(FROM Chunk TO Image)".to_string(),
         ];
         for stmt in &statements {
             conn.query(stmt).with_context(|| format!("schema: {stmt}"))?;

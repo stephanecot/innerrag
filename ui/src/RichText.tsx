@@ -6,6 +6,7 @@ import { marked, type Tokens } from "marked";
 import { useMemo } from "react";
 import { href } from "./App";
 import { useT } from "./i18n";
+import { imageUrl } from "./markdown";
 
 export interface CitedDocument {
   id: string;
@@ -72,11 +73,12 @@ function renderMarkdown(md: string, labels: { preview: string; source: string })
   return marked.parse(md, { gfm: true, breaks: false, renderer, async: false }) as string;
 }
 
-export default function RichText({ text, docs = [] }: { text: string; docs?: CitedDocument[] }) {
+export default function RichText({ text, docs = [], project }: { text: string; docs?: CitedDocument[]; project?: string }) {
   const t = useT();
-  const html = useMemo(
-    () => purify(renderMarkdown(linkCitations(text, docs), { preview: t("rich.preview"), source: t("rich.source") })),
-    [text, docs, t],
-  );
+  const html = useMemo(() => {
+    // Figures referenced the way documents store them are served by the project.
+    const withImages = project ? text.replace(/innerrag-image:([0-9a-f]{16}\.(?:png|jpg|gif|webp))/g, (_, file: string) => imageUrl(project, `innerrag-image:${file}`)) : text;
+    return purify(renderMarkdown(linkCitations(withImages, docs), { preview: t("rich.preview"), source: t("rich.source") }));
+  }, [text, docs, t, project]);
   return <div className="rich" dangerouslySetInnerHTML={{ __html: html }} />;
 }

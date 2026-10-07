@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import Figures from "../Figures";
 import { api, type SearchResponse } from "../api";
 import { href } from "../App";
 import { translate, useT, type Key } from "../i18n";
@@ -178,6 +179,7 @@ export default function SearchView({ project }: { project: string }) {
                       part.hit ? <mark key={j}>{part.text}</mark> : <span key={j}>{part.text}</span>,
                     )}
                   </p>
+                  {c.images && c.images.length > 0 && <Figures project={project} images={c.images} />}
                   <div>
                     <button
                       type="button"

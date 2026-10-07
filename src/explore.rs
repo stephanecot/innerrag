@@ -318,6 +318,71 @@ pub struct Neighbour {
     pub strength: f64,
 }
 
+/// A figure of a document, with the passage that shows it.
+#[derive(Serialize, Clone, Debug)]
+pub struct ImageRef {
+    /// File name under the project's `files/images/` (served by `/images/{file}`).
+    pub file: String,
+    pub caption: String,
+    pub doc_id: String,
+    pub doc_title: String,
+    pub page: Option<i64>,
+    pub chunk_id: String,
+}
+
+const IMAGE_COLUMNS: &str = "i.file, i.caption, d.id, d.title, i.page, c.id";
+
+fn image_refs(rows: Vec<db::Row>) -> Vec<ImageRef> {
+    let mut seen = std::collections::HashSet::new();
+    rows.iter()
+        .map(|r| ImageRef {
+            file: as_str(&r[0]),
+            caption: as_str(&r[1]),
+            doc_id: as_str(&r[2]),
+            doc_title: as_str(&r[3]),
+            page: page_of(&r[4]),
+            chunk_id: as_str(&r[5]),
+        })
+        // The same picture shown twice (in one document or several) is listed once.
+        .filter(|i| seen.insert(i.file.clone()))
+        .collect()
+}
+
+/// Images of the given passages.
+pub fn chunk_images(graph: &Graph, chunk_ids: Vec<String>) -> Result<Vec<ImageRef>> {
+    if chunk_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(image_refs(rows(
+        &graph.reader()?,
+        &format!(
+            "MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk)-[:SHOWS]->(i:Image) WHERE c.id IN $ids
+             RETURN {IMAGE_COLUMNS} ORDER BY c.idx, i.n"
+        ),
+        vec![("ids", db::strings(chunk_ids))],
+    )?))
+}
+
+/// Images of a document, in reading order.
+pub fn document_images(graph: &Graph, doc_id: &str) -> Result<Vec<ImageRef>> {
+    Ok(image_refs(rows(
+        &graph.reader()?,
+        &format!(
+            "MATCH (d:Document {{id: $doc}})-[:HAS_CHUNK]->(c:Chunk)-[:SHOWS]->(i:Image)
+             RETURN {IMAGE_COLUMNS} ORDER BY c.idx, i.n"
+        ),
+        vec![("doc", s(doc_id))],
+    )?))
+}
+
+/// The path of an image file of the project, if the name is one of ours (`<hex>.<ext>`).
+pub fn image_path(graph: &Graph, file: &str) -> Option<std::path::PathBuf> {
+    let (stem, ext) = file.rsplit_once('.')?;
+    let ok = stem.len() == 16 && stem.chars().all(|c| c.is_ascii_hexdigit()) && ["png", "jpg", "gif", "webp"].contains(&ext);
+    let path = graph.files_dir().join("images").join(file);
+    (ok && path.is_file()).then_some(path)
+}
+
 #[derive(Serialize)]
 pub struct Passage {
     pub chunk_id: String,
@@ -337,6 +402,8 @@ pub struct EntityDetail {
     /// Documents citing the entity, most passages first.
     pub documents: Vec<EntityDocument>,
     pub passages: Vec<Passage>,
+    /// Figures shown by the passages that cite the entity (or its document's, with `doc`).
+    pub images: Vec<ImageRef>,
 }
 
 #[derive(Serialize)]
@@ -427,7 +494,16 @@ pub fn get_entity(graph: &Graph, id: &str, doc: Option<&str>) -> Result<Option<E
         text: as_str(&r[5]),
     })
     .collect();
-    Ok(Some(EntityDetail { entity, neighbours, documents, passages }))
+    let images = image_refs(rows(
+        &conn,
+        &format!(
+            "MATCH (e:Entity {{id: $id}})<-[:MENTIONS]-(c:Chunk)<-[:HAS_CHUNK]-(d:Document), (c)-[:SHOWS]->(i:Image)
+             WHERE $doc = '' OR d.id = $doc
+             RETURN {IMAGE_COLUMNS} ORDER BY d.title, c.idx LIMIT 24"
+        ),
+        vec![("id", s(id)), ("doc", s(doc.unwrap_or_default()))],
+    )?);
+    Ok(Some(EntityDetail { entity, neighbours, documents, passages, images }))
 }
 
 #[derive(Serialize)]

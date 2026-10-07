@@ -12,8 +12,12 @@ use crate::Invalid;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: u32 = 5;
 
-/// Downloads `url` (http or https) and returns a file name that tells its format, and its bytes.
-pub fn fetch(url: &str, max_bytes: u64) -> Result<(String, Vec<u8>)> {
+const MAX_PAGE_IMAGES: usize = 40;
+const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Downloads `url` (http or https) and returns a file name that tells its format, its bytes,
+/// and the address it was finally served from (after redirects).
+pub fn fetch(url: &str, max_bytes: u64) -> Result<(String, Vec<u8>, String)> {
     let parsed = url.trim();
     let lower = parsed.to_lowercase();
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
@@ -46,7 +50,66 @@ pub fn fetch(url: &str, max_bytes: u64) -> Result<(String, Vec<u8>)> {
     if bytes.len() as u64 > max_bytes {
         return Err(Invalid(format!("`{parsed}` is larger than {} MB", max_bytes / 1024 / 1024)).into());
     }
-    Ok((file_name(&final_url, &content_type), bytes))
+    Ok((file_name(&final_url, &content_type), bytes, final_url))
+}
+
+/// An address of a page resource, resolved against the page's own address.
+fn resolve_url(base: &str, src: &str) -> Option<String> {
+    let src = src.trim();
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return Some(src.to_string());
+    }
+    let (scheme, rest) = base.split_once("://")?;
+    if let Some(protocol_relative) = src.strip_prefix("//") {
+        return Some(format!("{scheme}://{protocol_relative}"));
+    }
+    let host = rest.split('/').next()?;
+    if src.starts_with('/') {
+        return Some(format!("{scheme}://{host}{src}"));
+    }
+    if src.contains(':') {
+        return None; // another scheme (javascript:, blob:…)
+    }
+    // Relative to the page's folder, with `./` and `../` applied.
+    let path = rest[host.len()..].split(['?', '#']).next().unwrap_or("");
+    let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    if !path.ends_with('/') {
+        parts.pop();
+    }
+    for seg in src.split(['?', '#']).next().unwrap_or(src).split('/') {
+        match seg {
+            "." | "" => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    let query = src.find(['?', '#']).map(|q| &src[q..]).unwrap_or("");
+    Some(format!("{scheme}://{host}/{}{query}", parts.join("/")))
+}
+
+/// Downloads the images of a web page (their bytes stay empty when it fails: they are left out).
+fn fetch_images(images: &mut [crate::extract::ExtractedImage], page_url: &str) {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(15))
+        .redirects(MAX_REDIRECTS)
+        .user_agent(concat!("innerrag/", env!("CARGO_PKG_VERSION")))
+        .build();
+    let mut fetched = 0;
+    for image in images.iter_mut().filter(|i| i.bytes.is_empty()) {
+        if fetched >= MAX_PAGE_IMAGES {
+            break;
+        }
+        let Some(url) = image.source.as_deref().and_then(|s| resolve_url(page_url, s)) else { continue };
+        fetched += 1;
+        let Ok(response) = agent.get(&url).set("Referer", page_url).call() else { continue };
+        let mut bytes = Vec::new();
+        if response.into_reader().take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes).is_ok() && (bytes.len() as u64) <= MAX_IMAGE_BYTES {
+            image.bytes = bytes;
+            image.source = Some(url);
+        }
+    }
 }
 
 /// A file name whose extension says the format: from the content type, else from the URL path.
@@ -90,14 +153,17 @@ pub fn url_id(url: &str) -> String {
 
 /// Downloads a URL and turns it into an ingestion request (source: the URL).
 pub fn url_request(url: &str, max_bytes: u64, mut fields: FileFields) -> Result<(IngestRequest, String)> {
-    let (filename, bytes) = fetch(url, max_bytes)?;
+    let (filename, bytes, final_url) = fetch(url, max_bytes)?;
     fields.id = fields.id.filter(|i| !i.trim().is_empty()).or_else(|| Some(url_id(url)));
     fields.source = Some(url.trim().to_string());
     let mut metadata = fields.metadata.take().filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}));
     let now = time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap_or_default();
     metadata["url"] = serde_json::json!({ "address": url.trim(), "fetched_at": now });
     fields.metadata = Some(metadata);
-    Ok((ingest::file_request(&filename, bytes, fields)?, filename))
+    let mut req = ingest::file_request(&filename, bytes, fields)?;
+    // A page's figures are downloaded too, from their address relative to the page.
+    fetch_images(&mut req.images, &final_url);
+    Ok((req, filename))
 }
 
 #[cfg(test)]
@@ -112,5 +178,11 @@ mod tests {
         assert_eq!(file_name("https://example.com/a/spec", "application/pdf"), "spec.pdf");
         assert_eq!(url_id("https://example.com/docs/guide/#intro"), "url/example.com/docs/guide");
         assert!(fetch("file:///etc/passwd", 10).is_err());
+        let base = "https://example.com/docs/guide/page.html?x=1";
+        assert_eq!(resolve_url(base, "img/a.png").as_deref(), Some("https://example.com/docs/guide/img/a.png"));
+        assert_eq!(resolve_url(base, "../b.png").as_deref(), Some("https://example.com/docs/b.png"));
+        assert_eq!(resolve_url(base, "/c.png").as_deref(), Some("https://example.com/c.png"));
+        assert_eq!(resolve_url(base, "//cdn.example.org/d.png").as_deref(), Some("https://cdn.example.org/d.png"));
+        assert_eq!(resolve_url(base, "javascript:alert(1)"), None);
     }
 }

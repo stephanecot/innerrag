@@ -274,6 +274,7 @@ mod tests {
             via_keywords: false,
             rerank_score: None,
             entities: vec![],
+            images: Vec::new(),
         }
     }
 

@@ -142,7 +142,7 @@ export default function ReaderView({ project, params }: { project: string; param
             </nav>
           )}
           <article className="reader-text" aria-label={section?.title}>
-            {section && <Blocks blocks={section.blocks} onPage={isPdf && original ? openPage : undefined} highlightPage={targetPage} />}
+            {section && <Blocks blocks={section.blocks} onPage={isPdf && original ? openPage : undefined} highlightPage={targetPage} project={project} />}
             {sections.length > 1 && (
               <div className="reader-nav">
                 <button type="button" className="btn" disabled={index === 0} onClick={() => { setIndex(index - 1); window.scrollTo(0, 0); }}>

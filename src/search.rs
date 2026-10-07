@@ -84,6 +84,9 @@ pub struct ChunkHit {
     /// Cross-encoder relevance (0–1) when reranking ran; the passages are then ordered by it.
     pub rerank_score: Option<f64>,
     pub entities: Vec<String>,
+    /// Figures shown by the passage.
+    #[serde(default)]
+    pub images: Vec<crate::explore::ImageRef>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -354,6 +357,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
                 score: similarity + graph_boost + keyword_boost,
                 similarity, graph_score, graph_boost, keyword_boost, via_graph, via_keywords,
                 rerank_score: None,
+                images: Vec::new(),
             })
         })
         .collect();
@@ -392,6 +396,11 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         true
     });
     chunks.truncate(k);
+    // Figures of the passages kept.
+    let pictures = crate::explore::chunk_images(graph, chunks.iter().map(|c| c.id.clone()).collect())?;
+    for c in chunks.iter_mut() {
+        c.images = pictures.iter().filter(|i| i.chunk_id == c.id).cloned().collect();
+    }
 
     // 7. Relations among the selected entities.
     let mut entity_list: Vec<EntityHit> = entities.into_values().collect();

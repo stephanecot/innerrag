@@ -3,6 +3,7 @@ import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject 
 import { api, type DocumentSummary, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
 import { href } from "../App";
 import { CloseIcon, DocTypeIcon, SearchIcon } from "../Icons";
+import Figures from "../Figures";
 import { translate, useT } from "../i18n";
 import { cssVar, docKind, docKindInfo, labelColor, labelName, labelVar, num, num2, splitHighlights, statusLabel, STRENGTH_FULL, STRENGTH_RAMP, strengthColor, strengthLabel } from "../util";
 
@@ -211,7 +212,12 @@ export default function MapView({ project, params }: { project: string; params: 
     let live = true;
     p.entity(selected, docFilter ?? undefined)
       .then((d) => live && setDetail(d))
-      .catch((e) => live && setError((e as Error).message));
+      .catch((e) => {
+        if (!live) return;
+        // An entity that no longer exists (renamed or re-labelled at a re-import): close its panel.
+        setError((e as Error).message);
+        setSelected(null);
+      });
     return () => {
       live = false;
     };
@@ -751,6 +757,12 @@ export default function MapView({ project, params }: { project: string; params: 
                   {t("map.moreNeighbours", { n: Math.min(50, detail.neighbours.length) - 10 })}
                 </button>
               )}
+            </section>
+          )}
+          {detail && (detail.images?.length ?? 0) > 0 && (
+            <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <h3>{t("figures.title")}</h3>
+              <Figures project={project} images={detail.images ?? []} />
             </section>
           )}
           {detail && detail.passages.length > 0 && (

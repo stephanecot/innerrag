@@ -209,6 +209,9 @@ pub struct IngestRequest {
     /// The uploaded file, kept in the project's `files/` folder for reading as is.
     #[serde(skip)]
     pub original: Option<Original>,
+    /// Images found in the file, placed in `text` by `<!-- image N -->` markers.
+    #[serde(skip)]
+    pub images: Vec<crate::extract::ExtractedImage>,
 }
 
 /// What a client may set alongside an uploaded file (each overrides the file's own value).
@@ -255,6 +258,7 @@ pub fn file_request(filename: &str, bytes: Vec<u8>, fields: FileFields) -> Resul
         labels: None,
         plain: !extracted.structured,
         original: Some(Original { filename: filename.to_string(), bytes }),
+        images: extracted.images,
     })
 }
 
@@ -270,6 +274,93 @@ impl std::fmt::Debug for Original {
 }
 
 /// `files/<hash>.<ext>`: document ids may contain `/` or spaces, file names must not.
+/// Images kept from a document: what a browser can show, not tiny (icons, bullets), not
+/// repeated all over it (logos, ornaments), and at most `MAX_IMAGES`.
+const MAX_IMAGES: usize = 300;
+const MIN_IMAGE_BYTES: usize = 2048;
+const REPEATED_IMAGE: usize = 4;
+
+fn fnv64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+/// Saves the document's images worth keeping under `files/images/<hash>.<ext>` (shared by every
+/// document showing the same picture) and returns their file name by image index.
+fn save_images(graph: &Graph, images: &[crate::extract::ExtractedImage]) -> HashMap<usize, String> {
+    let named: Vec<Option<String>> = images
+        .iter()
+        .map(|img| {
+            let ext = crate::extract::web_image_ext(&img.bytes)?;
+            (img.bytes.len() >= MIN_IMAGE_BYTES).then(|| format!("{:016x}.{ext}", fnv64(&img.bytes)))
+        })
+        .collect();
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for name in named.iter().flatten() {
+        *counts.entry(name.as_str()).or_default() += 1;
+    }
+    let dir = graph.files_dir().join("images");
+    let mut saved = HashMap::new();
+    for (n, name) in named.iter().enumerate() {
+        let Some(name) = name else { continue };
+        if counts.get(name.as_str()).copied().unwrap_or(0) >= REPEATED_IMAGE || saved.len() >= MAX_IMAGES {
+            continue;
+        }
+        let path = dir.join(name);
+        if !path.exists() {
+            if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, &images[n].bytes)) {
+                tracing::warn!("cannot save image {name}: {e}");
+                continue;
+            }
+        }
+        saved.insert(n, name.clone());
+    }
+    saved
+}
+
+/// The document text with its image markers turned into Markdown images
+/// (`![caption](innerrag-image:<file>)`), resolved to URLs where the text is shown.
+fn with_image_links(text: &str, saved: &HashMap<usize, String>, captions: &HashMap<usize, String>) -> String {
+    if saved.is_empty() && !text.contains(crate::extract::IMAGE_MARKER) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        match crate::chunk::image_marker(line) {
+            Some(n) => {
+                if let Some(file) = saved.get(&n) {
+                    let caption = captions.get(&n).map(|c| c.replace(['[', ']'], "")).unwrap_or_default();
+                    out.push_str(&format!("![{caption}](innerrag-image:{file})"));
+                }
+            }
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Removes the image files no document shows any more.
+pub fn collect_images(graph: &Graph) {
+    let dir = graph.files_dir().join("images");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let used: HashSet<String> = graph
+        .reader()
+        .and_then(|conn| rows(&conn, "MATCH (i:Image) RETURN DISTINCT i.file", vec![]))
+        .map(|rs| rs.iter().map(|r| as_str(&r[0])).collect())
+        .unwrap_or_default();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !used.contains(&name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 fn stored_name(doc_id: &str, filename: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in doc_id.bytes() {
@@ -452,6 +543,16 @@ pub fn ingest(
     let pieces = if req.plain { chunk_plain(&req.text, size, overlap) } else { chunk_document(&req.text, size, overlap) };
     let chunks: Vec<String> = pieces.iter().map(|c| c.text.clone()).collect();
     let total = chunks.len();
+    // Figures: kept ones saved now; each is shown by the passage it falls in.
+    let saved_images = save_images(graph, &req.images);
+    let mut captions: HashMap<usize, String> = HashMap::new();
+    for piece in &pieces {
+        for (n, caption) in &piece.images {
+            let alt = req.images.get(*n).and_then(|i| i.alt.clone());
+            captions.insert(*n, alt.unwrap_or_else(|| caption.clone()));
+        }
+    }
+    let content = with_image_links(&req.text, &saved_images, &captions);
     // Re-import: passages whose text did not change keep their vectors and entities.
 
     let previous = if custom_labels { HashMap::new() } else { previous_chunks(graph, &doc_id)? };
@@ -590,7 +691,7 @@ pub fn ingest(
                 ("status", s(status.as_str())),
                 ("creator", s(creator)),
                 ("tags", db::strings(tags.clone())),
-                ("content", s(&req.text)),
+                ("content", s(&content)),
                 ("created", s(created_at)),
             ],
         )?;
@@ -630,6 +731,38 @@ pub fn ingest(
                  MATCH (a:Chunk {id: $doc + '#' + CAST(n AS STRING)}), (b:Chunk {id: $doc + '#' + CAST(n + 1 AS STRING)})
                  CREATE (a)-[:NEXT]->(b)",
                 vec![("doc", s(&doc_id)), ("last", db::i(chunks.len() as i64 - 1))],
+            )?;
+        }
+
+        let mut image_rows = Structs::new(&[
+            ("id", LogicalType::String),
+            ("chunk", LogicalType::String),
+            ("file", LogicalType::String),
+            ("caption", LogicalType::String),
+            ("page", LogicalType::Int64),
+            ("n", LogicalType::Int64),
+        ]);
+        for (idx, piece) in pieces.iter().enumerate() {
+            for (n, _) in &piece.images {
+                if let Some(file) = saved_images.get(n) {
+                    image_rows.push(vec![
+                        s(format!("{doc_id}#img{n}")),
+                        s(chunk_id(idx)),
+                        s(file),
+                        s(captions.get(n).cloned().unwrap_or_default()),
+                        db::i(piece.page.unwrap_or(0)),
+                        db::i(*n as i64),
+                    ]);
+                }
+            }
+        }
+        if !image_rows.is_empty() {
+            exec(
+                conn,
+                "UNWIND $rows AS r
+                 MATCH (c:Chunk {id: r.chunk})
+                 CREATE (c)-[:SHOWS]->(:Image {id: r.id, doc_id: $doc, file: r.file, caption: r.caption, page: r.page, n: r.n})",
+                vec![("doc", s(&doc_id)), ("rows", image_rows.into_value())],
             )?;
         }
 
@@ -733,6 +866,7 @@ pub fn ingest(
     drop(conn);
     graph.index_keywords(&doc_id, &chunks.iter().enumerate().map(|(i, text)| (chunk_id(i), text.clone())).collect::<Vec<_>>());
     graph.checkpoint()?;
+    collect_images(graph);
 
 
     tracing::info!(
@@ -802,7 +936,9 @@ pub fn delete_document(graph: &Graph, doc_id: &str) -> Result<()> {
         let _ = std::fs::remove_file(graph.files_dir().join(rel.trim_start_matches("files/")));
     }
     graph.index_keywords(doc_id, &[]);
-    graph.checkpoint()
+    graph.checkpoint()?;
+    collect_images(graph);
+    Ok(())
 }
 
 /// Removes a document, its chunks, the co-occurrence weight it contributed and orphan entities.
@@ -821,6 +957,7 @@ fn delete_document_tx(conn: &Connection, doc_id: &str) -> Result<bool> {
         vec![("id", s(doc_id))],
     )?;
     exec(conn, "MATCH ()-[x:RELATED]->() WHERE x.weight <= 0 DELETE x", vec![])?;
+    exec(conn, "MATCH (i:Image) WHERE i.doc_id = $id DETACH DELETE i", vec![("id", s(doc_id))])?;
     exec(
         conn,
         "MATCH (:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk) DETACH DELETE c",

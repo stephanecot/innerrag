@@ -45,9 +45,64 @@ impl Format {
     }
 }
 
+/// An image found in a document; `<!-- image N -->` in the text marks where it appears.
+#[derive(Clone, Default)]
+pub struct ExtractedImage {
+    /// Empty for an image of a web page that still has to be downloaded from `source`.
+    pub bytes: Vec<u8>,
+    /// Its own description, when the document gives one (alt text).
+    pub alt: Option<String>,
+    /// Address of an image of an HTML page, as written in the page (maybe relative).
+    pub source: Option<String>,
+}
+
+impl std::fmt::Debug for ExtractedImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ExtractedImage({} bytes, {:?})", self.bytes.len(), self.alt)
+    }
+}
+
+pub const IMAGE_MARKER: &str = "<!-- image ";
+
+/// The file extension of an image browsers display (PNG, JPEG, GIF, WebP), from its bytes.
+/// Other formats (EMF, WMF, TIFF…) and SVG (which may carry scripts) are left out.
+pub fn web_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("png"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("jpg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("gif"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("webp"),
+        _ => None,
+    }
+}
+
+fn zip_bytes(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Vec<u8>> {
+    let mut file = archive.by_name(name).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// An alt text worth keeping: not a file name or a generic "Picture 3".
+fn useful_alt(alt: Option<String>) -> Option<String> {
+    let alt = alt?.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = alt.to_lowercase();
+    // Descriptions Office writes by itself ("Une image contenant texte, capture d'écran…").
+    let automatic = ["une image contenant", "image contenant", "a picture containing", "an image containing", "ein bild, das", "généré par l'ia", "généré par l’ia", "ai-generated content"];
+    if automatic.iter().any(|a| lower.contains(a)) {
+        return None;
+    }
+    let generic = ["picture", "image", "imagen", "grafik", "graphic", "graphique", "chart", "diagram", "logo"];
+    let looks_generic = generic.iter().any(|g| lower.starts_with(g) && lower[g.len()..].trim().chars().all(|c| c.is_ascii_digit()));
+    let file_name = lower.contains('.') && !lower.contains(' ');
+    (!alt.is_empty() && !looks_generic && !file_name && alt.chars().count() <= 300).then_some(alt)
+}
+
 #[derive(Debug, Default)]
 pub struct Extracted {
     pub text: String,
+    /// Images, in the order of their `<!-- image N -->` markers.
+    pub images: Vec<ExtractedImage>,
     pub title: Option<String>,
     pub tags: Vec<String>,
     pub status: Option<String>,
@@ -106,7 +161,9 @@ pub fn extract(filename: &str, bytes: &[u8]) -> Result<(Format, Extracted)> {
         Format::Ppt => Extracted { text: run_tool("catppt", &["-d", "utf-8"], bytes, "ppt", &[])?, ..Default::default() },
         Format::Html => {
             let html = String::from_utf8_lossy(bytes);
-            Extracted { title: html_title(&html), text: html_to_markdown(main_region(&html)), ..Default::default() }
+            let mut images = Vec::new();
+            let text = html_markdown(main_region(&html), Some(&mut images));
+            Extracted { title: html_title(&html), text, images, ..Default::default() }
         }
         Format::Markdown | Format::Text => {
             let raw = String::from_utf8_lossy(bytes);
@@ -337,7 +394,67 @@ fn is_furniture(tag: &str) -> bool {
 const VOID_TAGS: [&str; 14] = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
 
 pub fn html_to_markdown(html: &str) -> String {
+    html_markdown(html, None)
+}
+
+/// Value of an attribute in a raw tag (`img src="…" alt='…'`), case kept.
+fn tag_attr(raw: &str, name: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(p) = lower[from..].find(name) {
+        let at = from + p;
+        from = at + name.len();
+        // A whole attribute name, followed by `=`.
+        if at > 0 && !lower.as_bytes()[at - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let rest = raw[at + name.len()..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let rest = rest.trim_start();
+        let value = match rest.chars().next() {
+            Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or(""),
+            _ => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
+        };
+        return Some(decode_entities(value));
+    }
+    None
+}
+
+/// Bytes of a `data:image/…;base64,…` address.
+fn data_uri(src: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let (head, data) = src.strip_prefix("data:")?.split_once(',')?;
+    if !head.ends_with(";base64") || !head.starts_with("image/") {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD.decode(data.trim()).ok()
+}
+
+/// An `<img>` of the content: its address (or embedded bytes) and alt text; small ones
+/// (declared under 48 px: icons, spacers, trackers) are left out.
+fn html_image(raw: &str) -> Option<ExtractedImage> {
+    let size = |n: &str| tag_attr(raw, n).and_then(|v| v.trim_end_matches("px").parse::<u32>().ok());
+    if size("width").is_some_and(|w| w < 48) || size("height").is_some_and(|h| h < 48) {
+        return None;
+    }
+    // Lazy-loaded pages keep the real address in data-src and a placeholder in src.
+    let src = tag_attr(raw, "src").filter(|s| !s.trim().is_empty() && !s.starts_with("data:image/gif") && !s.starts_with("data:image/svg"));
+    let src = tag_attr(raw, "data-src").or(src)?;
+    let alt = useful_alt(tag_attr(raw, "alt"));
+    match data_uri(&src) {
+        Some(bytes) => Some(ExtractedImage { bytes, alt, source: None }),
+        None if src.starts_with("data:") => None,
+        None => Some(ExtractedImage { bytes: Vec::new(), alt, source: Some(src) }),
+    }
+}
+
+/// HTML to Markdown; with `images`, each `<img>` of the content becomes a `<!-- image N -->`
+/// marker and an entry of `images`.
+fn html_markdown(html: &str, mut images: Option<&mut Vec<ExtractedImage>>) -> String {
     let lower = html.to_ascii_lowercase();
+    // A <figcaption> names the image of its <figure> when the image has no alt text.
+    let mut figure_image: Option<usize> = None;
+    let mut caption_start: Option<usize> = None;
     let mut out = String::new();
     let mut i = 0;
     let mut skip_until: Option<&str> = None;
@@ -366,6 +483,7 @@ pub fn html_to_markdown(html: &str) -> String {
         i += lt;
         let Some(gt) = html[i..].find('>') else { break };
         let tag = lower[i + 1..i + gt].trim();
+        let raw_tag = html[i + 1..i + gt].trim();
         i += gt + 1;
         let closing = tag.starts_with('/');
         let name: String = tag.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
@@ -417,6 +535,24 @@ pub fn html_to_markdown(html: &str) -> String {
                     let level = name[1..].parse::<usize>().unwrap_or(1);
                     out.push_str(&format!("\n\n{} ", "#".repeat(level)));
                 }
+            }
+            "img" if images.is_some() => {
+                if let (Some(list), Some(image)) = (images.as_deref_mut(), html_image(raw_tag)) {
+                    list.push(image);
+                    figure_image = Some(list.len() - 1);
+                    out.push_str(&format!("\n\n{IMAGE_MARKER}{} -->\n\n", list.len() - 1));
+                }
+            }
+            "figure" if closing => figure_image = None,
+            "figcaption" if !closing => caption_start = Some(out.len()),
+            "figcaption" => {
+                if let (Some(start), Some(n), Some(list)) = (caption_start.take(), figure_image, images.as_deref_mut()) {
+                    let caption = decode_entities(&out[start..]).split_whitespace().collect::<Vec<_>>().join(" ");
+                    if let Some(image) = list.get_mut(n).filter(|i| i.alt.is_none() && !caption.is_empty()) {
+                        image.alt = Some(caption.chars().take(300).collect());
+                    }
+                }
+                out.push_str("\n\n");
             }
             "li" if !closing => out.push_str("\n- "),
             "td" | "th" if !closing => out.push_str(" | "),
@@ -489,7 +625,21 @@ struct Line {
     mono: bool,
     bold: bool,
     text: String,
+    /// An image placed at this height on the page (its index in the extracted images).
+    image: Option<usize>,
 }
+
+#[derive(Debug, Clone)]
+struct PdfImage {
+    top: f32,
+    left: f32,
+    width: f32,
+    height: f32,
+    src: String,
+}
+
+/// Pages of `pdftohtml -xml`: number, height, text runs, images.
+type PdfPage = (usize, f32, Vec<Run>, Vec<PdfImage>);
 
 struct Font {
     size: f32,
@@ -503,10 +653,10 @@ fn is_mono(family: &str) -> bool {
 }
 
 /// Parses `pdftohtml -xml` output into positioned runs per page.
-fn pdf_runs(xml: &str) -> Result<(Vec<(usize, f32, Vec<Run>)>, HashMap<usize, Font>)> {
+fn pdf_runs(xml: &str) -> Result<(Vec<PdfPage>, HashMap<usize, Font>)> {
     let mut reader = Reader::from_str(xml);
     let mut fonts = HashMap::new();
-    let mut pages: Vec<(usize, f32, Vec<Run>)> = Vec::new();
+    let mut pages: Vec<PdfPage> = Vec::new();
     let mut current: Option<Run> = None;
     let mut bold_depth = 0;
     let num = |e: &BytesStart, k: &[u8]| attr(e, k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
@@ -523,7 +673,18 @@ fn pdf_runs(xml: &str) -> Result<(Vec<(usize, f32, Vec<Run>)>, HashMap<usize, Fo
                 });
             }
             Event::Start(e) if e.local_name().as_ref() == b"page" => {
-                pages.push((num(&e, b"number") as usize, num(&e, b"height"), Vec::new()));
+                pages.push((num(&e, b"number") as usize, num(&e, b"height"), Vec::new(), Vec::new()));
+            }
+            Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == b"image" => {
+                if let (Some(src), Some(page)) = (attr(&e, b"src"), pages.last_mut()) {
+                    page.3.push(PdfImage {
+                        top: num(&e, b"top"),
+                        left: num(&e, b"left"),
+                        width: num(&e, b"width"),
+                        height: num(&e, b"height"),
+                        src,
+                    });
+                }
             }
             Event::Start(e) if e.local_name().as_ref() == b"text" => {
                 current = Some(Run {
@@ -590,15 +751,27 @@ fn normalize_margin(text: &str) -> String {
 /// Converts `pdftohtml -xml` output to markdown: headings from font sizes, reflowed
 /// paragraphs, code blocks and inline code from monospaced fonts, running headers,
 /// footers and page numbers removed, `<!-- page N -->` markers between pages.
+#[cfg(test)]
 pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
+    Ok(pdf_layout(xml, &mut |_| None)?.0)
+}
+
+/// Images smaller than this (in page points) are bullets, icons or rules, not figures.
+const PDF_MIN_IMAGE: f32 = 60.0;
+
+/// Same as `pdf_xml_to_markdown`, with the images `load` can read placed where they are on
+/// their page (`<!-- image N -->`).
+fn pdf_layout(xml: &str, load: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Result<(String, Vec<ExtractedImage>)> {
     let (pages, fonts) = pdf_runs(xml)?;
+    let mut images: Vec<ExtractedImage> = Vec::new();
     let font = |id: usize| fonts.get(&id).map_or((0.0, false, false), |f| (f.size, f.mono, f.bold));
 
     // 1. Lines: runs sharing a baseline.
     let mut lines: Vec<Line> = Vec::new();
     let mut page_heights = HashMap::new();
-    for (page, height, runs) in &pages {
+    for (page, height, runs, page_images) in &pages {
         page_heights.insert(*page, *height);
+        let first_line = lines.len();
         let mut runs = runs.clone();
         runs.sort_by(|a, b| a.top.total_cmp(&b.top).then(a.left.total_cmp(&b.left)));
         let mut group: Vec<Run> = Vec::new();
@@ -640,6 +813,7 @@ pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
                     mono: line_mono,
                     bold,
                     text,
+                    image: None,
                 });
             }
             group.clear();
@@ -651,9 +825,26 @@ pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
             group.push(run);
         }
         flush(&mut group, &mut lines);
+        // Figures take their place among the lines of their page, by height.
+        for img in page_images.iter().filter(|i| i.width >= PDF_MIN_IMAGE && i.height >= PDF_MIN_IMAGE) {
+            let Some(bytes) = load(&img.src) else { continue };
+            images.push(ExtractedImage { bytes, alt: None, source: None });
+            lines.push(Line {
+                page: *page,
+                top: img.top,
+                left: img.left,
+                height: img.height,
+                size: 0.0,
+                mono: false,
+                bold: false,
+                text: String::new(),
+                image: Some(images.len() - 1),
+            });
+        }
+        lines[first_line..].sort_by(|a, b| a.top.total_cmp(&b.top));
     }
-    if lines.is_empty() {
-        return Ok(String::new());
+    if lines.iter().all(|l| l.image.is_some()) {
+        return Ok((String::new(), images));
     }
 
     // 2. Running headers / footers: text repeated in the top or bottom margin of many pages.
@@ -667,6 +858,11 @@ pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
     }
     let repeat_threshold = (pages.len() / 20).max(3);
     lines.retain(|l| {
+        if l.image.is_some() {
+            // An image entirely in a margin is a logo or a running ornament.
+            let h = page_heights.get(&l.page).copied().unwrap_or(1000.0).max(1.0);
+            return !(l.top + l.height < h * 0.09 || l.top > h * 0.91);
+        }
         if !in_margin(l) {
             return true;
         }
@@ -743,6 +939,17 @@ pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
                 para.push_str(&format!("\u{0}{}\u{0}", l.page));
             }
             page = l.page;
+        }
+        if let Some(n) = l.image {
+            // A figure ends the paragraph and the code around it.
+            if let Some((lv, text, _, _)) = pending_heading.take() {
+                out.push_str(&format!("{} {}\n\n", "#".repeat(lv), text));
+            }
+            flush_para(&mut para, &mut out);
+            flush_code(&mut code, &mut out);
+            out.push_str(&format!("{IMAGE_MARKER}{n} -->\n\n"));
+            prev = None;
+            continue;
         }
         if let Some(level) = level_of(l) {
             flush_para(&mut para, &mut out);
@@ -863,7 +1070,36 @@ pub fn pdf_xml_to_markdown(xml: &str) -> Result<String> {
             fixed.push_str(&format!("{PAGE_MARKER}{m} -->\n\n"));
         }
     }
-    Ok(fixed)
+    Ok((fixed, images))
+}
+
+/// `pdftohtml -xml` with the embedded images written next to the XML, in a temporary folder.
+fn pdf_with_images(bytes: &[u8]) -> Result<(String, Vec<ExtractedImage>)> {
+    let dir = std::env::temp_dir().join(format!("innerrag-pdf-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).context("creating a temporary folder")?;
+    let result = (|| {
+        let input = dir.join("in.pdf");
+        std::fs::write(&input, bytes).context("writing temporary file")?;
+        let output = Command::new("pdftohtml")
+            .args(["-xml", "-q", "-fmt", "png"])
+            .arg(&input)
+            .arg(dir.join("out"))
+            .output()
+            .map_err(|e| anyhow!("`pdftohtml` is not available ({e}); it ships in the innerrag image"))?;
+        if !output.status.success() {
+            return Err(Invalid(format!("pdftohtml could not read the file: {}", String::from_utf8_lossy(&output.stderr).trim())).into());
+        }
+        let xml = std::fs::read_to_string(dir.join("out.xml")).context("reading pdftohtml output")?;
+        let mut load = |src: &str| {
+            let path = Path::new(src);
+            let path = if path.is_absolute() { path.to_path_buf() } else { dir.join(path) };
+            // Only files pdftohtml wrote in the temporary folder.
+            path.starts_with(&dir).then(|| std::fs::read(&path).ok()).flatten()
+        };
+        pdf_layout(&xml, &mut load)
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 fn pdf(bytes: &[u8]) -> Result<Extracted> {
@@ -873,16 +1109,16 @@ fn pdf(bytes: &[u8]) -> Result<Extracted> {
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
     });
-    // Structured conversion first; plain text when the layout cannot be read.
-    if let Ok(xml) = run_tool("pdftohtml", &["-xml", "-i", "-q", "-stdout"], bytes, "pdf", &[]) {
-        let pages = xml.matches("<page ").count();
-        match pdf_xml_to_markdown(&xml) {
-            Ok(md) if md.split_whitespace().count() > pages.max(1) * 5 => {
-                return Ok(Extracted { text: md, title, pages: Some(pages), structured: true, ..Default::default() });
-            }
-            Ok(_) => tracing::info!("PDF layout gave little text, falling back to pdftotext"),
-            Err(e) => tracing::warn!("PDF layout conversion failed ({e:#}), falling back to pdftotext"),
+    // Structured conversion with the figures first; plain text when the layout cannot be read.
+    let pages = run_tool("pdfinfo", &[], bytes, "pdf", &[])
+        .ok()
+        .and_then(|info| info.lines().find_map(|l| l.strip_prefix("Pages:")).and_then(|p| p.trim().parse::<usize>().ok()));
+    match pdf_with_images(bytes) {
+        Ok((md, images)) if md.split_whitespace().count() > pages.unwrap_or(1).max(1) * 5 => {
+            return Ok(Extracted { text: md, images, title, pages, structured: true, ..Default::default() });
         }
+        Ok(_) => tracing::info!("PDF layout gave little text, falling back to pdftotext"),
+        Err(e) => tracing::warn!("PDF layout conversion failed ({e:#}), falling back to pdftotext"),
     }
     let mut plain = pdf_plain(bytes)?;
     plain.title = title;
@@ -977,6 +1213,15 @@ pub fn docx(bytes: &[u8]) -> Result<Extracted> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
     let xml = zip_text(&mut archive, "word/document.xml").ok_or_else(|| anyhow!("word/document.xml missing"))?;
     let title = core_title(&mut archive);
+    // Images are reached through the document's relationships: rId → word/media/image1.png.
+    let media: HashMap<String, String> = relationships(&mut archive, "word/_rels/document.xml.rels")
+        .into_iter()
+        .filter(|(_, _, kind)| kind.ends_with("/image"))
+        .map(|(id, target, _)| (id, resolve("word", &target)))
+        .collect();
+    let mut images: Vec<ExtractedImage> = Vec::new();
+    let mut pending_images: Vec<usize> = Vec::new();
+    let mut alt: Option<String> = None;
 
     let mut reader = Reader::from_str(&xml);
     let mut out = String::new();
@@ -1007,6 +1252,14 @@ pub fn docx(bytes: &[u8]) -> Result<Extracted> {
                 b"tab" => para.push('\t'),
                 b"br" | b"cr" => para.push('\n'),
                 b"pStyle" => heading = local_attr(&e, b"val").as_deref().and_then(heading_level),
+                b"docPr" => alt = local_attr(&e, b"descr").filter(|d| !d.trim().is_empty()).or_else(|| local_attr(&e, b"title")),
+                b"blip" => {
+                    let bytes = local_attr(&e, b"embed").and_then(|id| media.get(&id).cloned()).and_then(|p| zip_bytes(&mut archive, &p));
+                    if let Some(bytes) = bytes {
+                        images.push(ExtractedImage { bytes, alt: useful_alt(alt.take()), source: None });
+                        pending_images.push(images.len() - 1);
+                    }
+                }
                 _ => {}
             },
             Event::Text(t) if in_text => para.push_str(&t.unescape()?),
@@ -1028,6 +1281,12 @@ pub fn docx(bytes: &[u8]) -> Result<Extracted> {
                             (None, false) => out.push_str(&format!("{text}\n\n")),
                         }
                     }
+                    // Images of the paragraph come right after it (after the table, inside one).
+                    if table_depth == 0 {
+                        for n in pending_images.drain(..) {
+                            out.push_str(&format!("\n{IMAGE_MARKER}{n} -->\n\n"));
+                        }
+                    }
                     para.clear();
                 }
                 b"tc" if table_depth == 1 => row.push(cell.replace('|', "/")),
@@ -1040,6 +1299,9 @@ pub fn docx(bytes: &[u8]) -> Result<Extracted> {
                     table_depth = table_depth.saturating_sub(1);
                     if table_depth == 0 {
                         out.push('\n');
+                        for n in pending_images.drain(..) {
+                            out.push_str(&format!("\n{IMAGE_MARKER}{n} -->\n\n"));
+                        }
                     }
                 }
                 _ => {}
@@ -1048,7 +1310,33 @@ pub fn docx(bytes: &[u8]) -> Result<Extracted> {
             _ => {}
         }
     }
-    Ok(Extracted { text: out, title, ..Default::default() })
+    for n in pending_images.drain(..) {
+        out.push_str(&format!("\n{IMAGE_MARKER}{n} -->\n\n"));
+    }
+    Ok(Extracted { text: out, title, images, ..Default::default() })
+}
+
+/// Images of a slide, in order: (relationship id, alt text).
+fn slide_images(xml: &str) -> Vec<(String, Option<String>)> {
+    let mut reader = Reader::from_str(xml);
+    let mut out = Vec::new();
+    let mut alt = None;
+    while let Ok(event) = reader.read_event() {
+        match event {
+            Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
+                b"cNvPr" => alt = local_attr(&e, b"descr").filter(|d| !d.trim().is_empty()).or_else(|| local_attr(&e, b"title")),
+                b"blip" => {
+                    if let Some(id) = local_attr(&e, b"embed") {
+                        out.push((id, alt.take()));
+                    }
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Resolves `../notesSlides/x.xml` against `ppt/slides/`.
@@ -1181,6 +1469,7 @@ pub fn pptx(bytes: &[u8]) -> Result<Extracted> {
     let title = core_title(&mut archive);
     let slides = slide_paths(&mut archive);
     let mut out = String::new();
+    let mut images: Vec<ExtractedImage> = Vec::new();
     for (n, path) in slides.iter().enumerate() {
         let Some(xml) = zip_text(&mut archive, path) else { continue };
         let (slide_title, paragraphs) = slide_text(&xml, false)?;
@@ -1192,9 +1481,21 @@ pub fn pptx(bytes: &[u8]) -> Result<Extracted> {
             out.push_str(p);
             out.push_str("\n\n");
         }
-        // Speaker notes, through the slide's relationships.
+        // Pictures and speaker notes, through the slide's relationships.
         let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
-        let notes = relationships(&mut archive, &format!("{dir}/_rels/{file}.rels"))
+        let rels = relationships(&mut archive, &format!("{dir}/_rels/{file}.rels"));
+        let media: HashMap<String, String> = rels
+            .iter()
+            .filter(|(_, _, kind)| kind.ends_with("/image"))
+            .map(|(id, target, _)| (id.clone(), resolve(dir, target)))
+            .collect();
+        for (id, alt) in slide_images(&xml) {
+            if let Some(bytes) = media.get(&id).and_then(|p| zip_bytes(&mut archive, p)) {
+                images.push(ExtractedImage { bytes, alt: useful_alt(alt), source: None });
+                out.push_str(&format!("{IMAGE_MARKER}{} -->\n\n", images.len() - 1));
+            }
+        }
+        let notes = rels
             .into_iter()
             .find(|(_, _, kind)| kind.ends_with("/notesSlide"))
             .map(|(_, target, _)| resolve(dir, &target));
@@ -1205,7 +1506,7 @@ pub fn pptx(bytes: &[u8]) -> Result<Extracted> {
             }
         }
     }
-    Ok(Extracted { text: out, title, pages: Some(slides.len()), ..Default::default() })
+    Ok(Extracted { text: out, title, images, pages: Some(slides.len()), ..Default::default() })
 }
 
 #[cfg(test)]
@@ -1261,6 +1562,19 @@ mod tests {
         assert!(is_furniture(r#"div id="catlinks" class="catlinks""#) && is_furniture(r#"ul role="navigation""#));
         assert!(!is_furniture(r#"div class="mw-content-text""#) && !is_furniture(r#"div class="tocolor""#));
         assert_eq!(html_title("<title>Guide &amp; FAQ</title>").as_deref(), Some("Guide & FAQ"));
+        let mut images = Vec::new();
+        let md = html_markdown(r#"<p>Intro</p><figure><img src="/a.png" width="300"><figcaption>A <b>property</b> graph</figcaption></figure><img src="x.gif" width="1">"#, Some(&mut images));
+        assert_eq!(images.len(), 1, "{md}");
+        assert_eq!(images[0].alt.as_deref(), Some("A property graph"));
+        assert_eq!(images[0].source.as_deref(), Some("/a.png"));
+    }
+
+    #[test]
+    fn office_alt_texts() {
+        assert_eq!(useful_alt(Some("Une image contenant texte, capture d’écran\n\nLe contenu généré par l’IA peut être incorrect.".into())), None);
+        assert_eq!(useful_alt(Some("Picture 3".into())), None);
+        assert_eq!(useful_alt(Some("image1.png".into())), None);
+        assert_eq!(useful_alt(Some("Flux d'ingestion du MRP".into())).as_deref(), Some("Flux d'ingestion du MRP"));
     }
 
     #[test]
