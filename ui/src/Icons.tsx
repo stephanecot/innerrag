@@ -14,6 +14,7 @@ export const DocIcon = () => <Svg><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h
 export const SearchIcon = ({ size }: { size?: number }) => <Svg size={size}><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5" /></Svg>;
 export const HistoryIcon = () => <Svg><path d="M4 12a8 8 0 1 0 2.3-5.6" /><path d="M4 4v4h4M12 8v4l3 2" /></Svg>;
 export const ChatIcon = () => <Svg><path d="M4 5h16v11H9l-5 4z" /><path d="M8 9h8M8 12h5" /></Svg>;
+export const PlugIcon = () => <Svg><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z" /><path d="M12 17v4" /></Svg>;
 export const ConsoleIcon = () => <Svg><path d="M4 6l5 6-5 6M12 18h8" /></Svg>;
 export const CheckIcon = () => <Svg><path d="M4 12l5 5L20 6" /></Svg>;
 export const FolderIcon = () => <Svg><path d="M3 7h7l2 2h9v10H3z" /></Svg>;

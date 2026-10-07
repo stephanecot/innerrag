@@ -346,3 +346,37 @@ export const api = {
 };
 
 export type ProjectApi = ReturnType<typeof api.project>;
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: {
+    properties?: Record<string, { type?: string; description?: string; enum?: string[]; minimum?: number; maximum?: number; items?: { type?: string } }>;
+    required?: string[];
+  };
+}
+
+export interface McpResult {
+  text: string;
+  isError: boolean;
+}
+
+/** JSON-RPC over the project's MCP endpoint, as an agent would call it. */
+async function mcpCall<T>(project: string, method: string, params: unknown): Promise<T> {
+  const res = await fetch(`/mcp/${encodeURIComponent(project)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(body.error.message ?? "MCP error");
+  return body.result as T;
+}
+
+export const mcp = {
+  tools: (project: string) => mcpCall<{ tools: McpTool[] }>(project, "tools/list", {}).then((r) => r.tools),
+  call: (project: string, name: string, args: Record<string, unknown>) =>
+    mcpCall<{ content: { type: string; text?: string }[]; isError?: boolean }>(project, "tools/call", { name, arguments: args }).then(
+      (r): McpResult => ({ text: r.content.map((c) => c.text ?? "").join("\n"), isError: !!r.isError }),
+    ),
+};

@@ -480,3 +480,40 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .chat-text .md-h3, .chat-text .md-h4, .chat-text .md-h5, .chat-text .md-h6 { font-size: 17px; }
 .chat-page > .page-head { max-width: 80ch; }
 .chat-text pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+/* ---- MCP tools ---- */
+.mcp-page { gap: 16px; }
+.mcp-connect { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.copyable { flex: 1 1 380px; min-width: 0; display: flex; align-items: center; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.copyable-label { flex: none; padding: 0 12px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.copyable code { flex: 1; min-width: 0; padding: 12px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.copyable-button { flex: none; align-self: stretch; min-height: 44px; padding: 0 14px; border: 0; border-left: 1px solid var(--rule); background: var(--sunken); font-weight: 600; cursor: pointer; }
+.mcp-layout { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.mcp-list { flex: 1 1 260px; max-width: 340px; padding: 8px; display: flex; flex-direction: column; gap: 6px; position: sticky; top: 16px; }
+.mcp-list-group { display: flex; flex-direction: column; }
+.mcp-list-title { padding: 8px 10px 4px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.mcp-list a { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.mcp-list a .mono { font-size: 13.5px; font-weight: 600; }
+.mcp-list a:hover { background: var(--sunken); }
+.mcp-list a[aria-current] { background: var(--ink); color: var(--paper); }
+.mcp-list a[aria-current] .mcp-list-short { color: var(--paper); opacity: 0.8; }
+.mcp-list-short { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
+.mcp-list-short .tool-kind { padding: 0 6px; font-size: 11.5px; }
+.tool-detail { flex: 999 1 420px; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.tool-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tool-head h2 { font-family: var(--font-mono); font-size: 19px; }
+.tool-kind { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--sunken); color: var(--ink-2); }
+.tool-kind.writes { background: var(--warn-bg); color: var(--warn-ink); }
+.tool-params { margin: 0; display: flex; flex-direction: column; border-top: 1px solid var(--rule-soft); }
+.tool-params > div { padding: 8px 0; border-bottom: 1px solid var(--rule-soft); }
+.tool-params dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; }
+.tool-params dt .mono { font-weight: 600; }
+.tool-params dd { margin: 2px 0 0; font-size: 14px; color: var(--ink-2); }
+.tool-required { font-size: 12px; color: var(--danger); }
+.tool-raw summary { cursor: pointer; font-size: 14px; color: var(--link); min-height: 32px; display: flex; align-items: center; }
+.tool-raw p { font-size: 14px; color: var(--ink-2); }
+.tool-try { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px dashed var(--rule); }
+.tool-try h3 { font-size: 16px; }
+.tool-try-fields { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.tool-result { margin: 0; padding: 12px 14px; max-height: 360px; overflow: auto; background: var(--sunken); border-radius: 8px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-result.failed { background: var(--danger-bg); color: var(--danger); }

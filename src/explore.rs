@@ -448,7 +448,32 @@ pub fn find_entity(graph: &Graph, name: &str) -> Result<Option<String>> {
     if let Some(r) = found.first() {
         return Ok(Some(as_str(&r[0])));
     }
+    // Same name written differently: "ContentProvider", "content provider", "Content-Providers".
+    let wanted = compact(name);
+    if !wanted.is_empty() {
+        let all = rows(
+            &conn,
+            "MATCH (e:Entity) RETURN e.id, e.name, COUNT { MATCH (e)<-[:MENTIONS]-(:Chunk) } AS n",
+            vec![],
+        )?;
+        let best = all
+            .iter()
+            .filter(|r| compact(&as_str(&r[1])) == wanted)
+            .max_by_key(|r| as_i64(&r[2]));
+        if let Some(r) = best {
+            return Ok(Some(as_str(&r[0])));
+        }
+    }
     Ok(list_entities(graph, name, "", true, 1)?.into_iter().next().map(|e| e.id))
+}
+
+/// Lowercased letters and digits only, without a final plural "s".
+fn compact(name: &str) -> String {
+    let mut out: String = name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    if out.len() > 3 && out.ends_with('s') && !out.ends_with("ss") {
+        out.pop();
+    }
+    out
 }
 
 #[derive(Serialize)]
