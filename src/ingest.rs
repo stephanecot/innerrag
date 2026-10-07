@@ -231,7 +231,7 @@ pub fn file_request(filename: &str, bytes: Vec<u8>, fields: FileFields) -> Resul
         Some(s) => Some(Status::parse(&s)?),
         None => None,
     };
-    // "LLD _GCMT_MRP.docx" → "LLD GCMT MRP".
+    // "Design _spec_v2.docx" → "Design spec v2".
     let stem = std::path::Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or("document");
     let stem = stem.replace('_', " ").split_whitespace().collect::<Vec<_>>().join(" ");
     let stem = if stem.is_empty() { "document".to_string() } else { stem };
