@@ -154,6 +154,19 @@ fn tools(with_project_arg: bool) -> Value {
             "annotations": { "readOnlyHint": true }
         },
         {
+            "name": "explore_relation",
+            "description": "Explains the link between two entities: how many passages cite both, how specific the link is (strength 0–1) and those passages.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "a": { "type": "string", "description": "First entity (name or label:name id)." },
+                    "b": { "type": "string", "description": "Second entity." }
+                },
+                "required": ["a", "b"]
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "ingest_document",
             "description": "Adds a text document to the project (chunking, embeddings, entity extraction). Re-using an existing id replaces that document.",
             "inputSchema": {
@@ -361,12 +374,17 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
     let detail = match name {
         "search_knowledge" => args.get("query").and_then(Value::as_str).unwrap_or_default().to_string(),
         "explore_entity" => args.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+        "explore_relation" => format!(
+            "{} — {}",
+            args.get("a").and_then(Value::as_str).unwrap_or_default(),
+            args.get("b").and_then(Value::as_str).unwrap_or_default()
+        ),
         "run_cypher" => args.get("query").and_then(Value::as_str).unwrap_or_default().to_string(),
         _ => String::new(),
     };
     let operation = match name {
         "search_knowledge" => "search",
-        "explore_entity" => "explore",
+        "explore_entity" | "explore_relation" => "explore",
         "list_documents" => "list_documents",
         "graph_stats" => "stats",
         "run_cypher" => "cypher",
@@ -427,6 +445,26 @@ fn run_tool(
             out.push_str("\n## Passages\n");
             for p in &e.passages {
                 let _ = write!(out, "\n### {} (passage {}, {})\n{}\n", p.doc_title, p.idx + 1, p.doc_status, p.text);
+            }
+            Ok(out)
+        }
+        "explore_relation" => {
+            let (a, b) = (arg_str(args, "a")?, arg_str(args, "b")?);
+            let (Some(ia), Some(ib)) = (explore::find_entity(graph, &a)?, explore::find_entity(graph, &b)?) else {
+                *result_line = "entité inconnue".into();
+                return Ok(format!("No entity matches \"{a}\" or \"{b}\"."));
+            };
+            let Some(rel) = explore::relation(graph, &ia, &ib)? else {
+                return Ok("No such entities.".into());
+            };
+            *result_line = count(rel.passages.len(), "passage", "passages");
+            let mut out = format!(
+                "# {} ({}) — {} ({})\n{} passages cite both; link strength {:.2} (share of the passages citing either that cite both).\n",
+                rel.a.name, rel.a.label, rel.b.name, rel.b.label, rel.weight, rel.strength
+            );
+            for p in &rel.passages {
+                let loc = p.page.map_or_else(|| format!("passage {}", p.idx + 1), |pg| format!("page {pg}"));
+                let _ = write!(out, "\n### {} ({loc}, {})\n{}\n", p.doc_title, p.doc_status, p.text);
             }
             Ok(out)
         }

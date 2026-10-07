@@ -315,6 +315,7 @@ pub struct Neighbour {
     #[serde(flatten)]
     pub entity: EntitySummary,
     pub weight: i64,
+    pub strength: f64,
 }
 
 #[derive(Serialize)]
@@ -349,20 +350,26 @@ pub fn get_entity(graph: &Graph, id: &str) -> Result<Option<EntityDetail>> {
     };
     let neighbours = rows(
         &conn,
-        "MATCH (e:Entity {id: $id})-[r:RELATED]-(n:Entity)
-         RETURN n.id, n.name, n.label, r.weight ORDER BY r.weight DESC, n.name LIMIT 50",
+        "MATCH (a:Entity {id: $id})-[r:RELATED]-(b:Entity)
+         RETURN b.id, b.name, b.label, r.weight,
+                COUNT { MATCH (a)<-[:MENTIONS]-(:Chunk) }, COUNT { MATCH (b)<-[:MENTIONS]-(:Chunk) } AS nb
+         ORDER BY r.weight DESC, b.name LIMIT 50",
         vec![("id", s(id))],
     )?
     .iter()
-    .map(|r| Neighbour {
-        entity: EntitySummary {
-            id: as_str(&r[0]),
-            name: as_str(&r[1]),
-            label: as_str(&r[2]),
-            mentions: 0,
-            published_mentions: 0,
-        },
-        weight: as_i64(&r[3]),
+    .map(|r| {
+        let weight = as_i64(&r[3]);
+        Neighbour {
+            entity: EntitySummary {
+                id: as_str(&r[0]),
+                name: as_str(&r[1]),
+                label: as_str(&r[2]),
+                mentions: as_i64(&r[5]),
+                published_mentions: 0,
+            },
+            weight,
+            strength: strength(weight, as_i64(&r[4]), as_i64(&r[5])),
+        }
     })
     .collect();
     let passages = rows(
@@ -385,6 +392,49 @@ pub fn get_entity(graph: &Graph, id: &str) -> Result<Option<EntityDetail>> {
     Ok(Some(EntityDetail { entity, neighbours, passages }))
 }
 
+#[derive(Serialize)]
+pub struct RelationDetail {
+    pub a: EntitySummary,
+    pub b: EntitySummary,
+    pub weight: i64,
+    pub strength: f64,
+    /// Passages where both appear.
+    pub passages: Vec<Passage>,
+}
+
+/// Why two entities are linked: the passages that cite both.
+pub fn relation(graph: &Graph, a: &str, b: &str) -> Result<Option<RelationDetail>> {
+    let conn = graph.reader()?;
+    let ends = entity_rows(rows(
+        &conn,
+        &format!("UNWIND [$a, $b] AS id MATCH (e:Entity {{id: id}}) {MENTION_COUNTS} RETURN e.id, e.name, e.label, n, p"),
+        vec![("a", s(a)), ("b", s(b))],
+    )?);
+    let (Some(ea), Some(eb)) = (ends.iter().find(|e| e.id == a).cloned(), ends.iter().find(|e| e.id == b).cloned()) else {
+        return Ok(None);
+    };
+    let passages: Vec<Passage> = rows(
+        &conn,
+        "MATCH (x:Entity {id: $a})<-[:MENTIONS]-(c:Chunk)-[:MENTIONS]->(y:Entity {id: $b}), (d:Document)-[:HAS_CHUNK]->(c)
+         RETURN c.id, d.id, d.title, d.status, c.idx, c.text, c.page ORDER BY d.title, c.idx",
+        vec![("a", s(a)), ("b", s(b))],
+    )?
+    .iter()
+    .map(|r| Passage {
+        chunk_id: as_str(&r[0]),
+        doc_id: as_str(&r[1]),
+        doc_title: as_str(&r[2]),
+        doc_status: as_str(&r[3]),
+        page: page_of(&r[6]),
+        idx: as_i64(&r[4]),
+        text: as_str(&r[5]),
+    })
+    .collect();
+    let weight = passages.len() as i64;
+    let strength = strength(weight, ea.mentions, eb.mentions);
+    Ok(Some(RelationDetail { a: ea, b: eb, weight, strength, passages: passages.into_iter().take(30).collect() }))
+}
+
 /// Resolves a free-text entity name (exact match first, then substring).
 pub fn find_entity(graph: &Graph, name: &str) -> Result<Option<String>> {
     let conn = graph.reader()?;
@@ -405,8 +455,20 @@ pub fn find_entity(graph: &Graph, name: &str) -> Result<Option<String>> {
 pub struct Edge {
     pub source: String,
     pub target: String,
+    /// Passages where both entities appear.
     pub weight: i64,
+    /// Share of the passages citing either entity that cite both (0–1, Jaccard): high when the
+    /// link is specific, low when one side is cited everywhere.
+    pub strength: f64,
 }
+
+/// Jaccard strength of a link from its weight and the passage counts of both ends.
+fn strength(weight: i64, a: i64, b: i64) -> f64 {
+    let union = (a + b - weight).max(weight).max(1);
+    weight as f64 / union as f64
+}
+
+const LINK_COUNTS: &str = "COUNT { MATCH (a)<-[:MENTIONS]-(:Chunk) }, COUNT { MATCH (b)<-[:MENTIONS]-(:Chunk) }";
 
 #[derive(Serialize)]
 pub struct GraphView {
@@ -417,13 +479,18 @@ pub struct GraphView {
 fn edges_between(conn: &lbug::Connection, ids: Vec<String>, min_weight: i64) -> Result<Vec<Edge>> {
     Ok(rows(
         conn,
-        "MATCH (a:Entity)-[r:RELATED]->(b:Entity)
-         WHERE a.id IN $ids AND b.id IN $ids AND r.weight >= $w
-         RETURN a.id, b.id, r.weight",
+        &format!(
+            "MATCH (a:Entity)-[r:RELATED]->(b:Entity)
+             WHERE a.id IN $ids AND b.id IN $ids AND r.weight >= $w
+             RETURN a.id, b.id, r.weight, {LINK_COUNTS}"
+        ),
         vec![("ids", db::strings(ids)), ("w", db::i(min_weight))],
     )?
     .iter()
-    .map(|r| Edge { source: as_str(&r[0]), target: as_str(&r[1]), weight: as_i64(&r[2]) })
+    .map(|r| {
+        let weight = as_i64(&r[2]);
+        Edge { source: as_str(&r[0]), target: as_str(&r[1]), weight, strength: strength(weight, as_i64(&r[3]), as_i64(&r[4])) }
+    })
     .collect())
 }
 

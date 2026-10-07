@@ -361,6 +361,12 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .neighbours li:last-child { border-bottom: 0; }
 .neighbours button { flex: 1; text-align: left; background: none; border: 0; padding: 6px 0; cursor: pointer; color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
 .weight { display: flex; gap: 3px; }
+.link-score { background: none; border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.link-score:hover { border-color: var(--ink); color: var(--ink); }
+.relation-figures { margin: 0; display: flex; gap: 32px; }
+.relation-figures div { display: flex; flex-direction: column-reverse; }
+.relation-figures dt { font-size: 14px; color: var(--ink-soft); }
+.relation-figures dd { margin: 0; font-family: var(--font-display); font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .weight span { width: 6px; height: 14px; background: var(--ink); }
 
 /* ---- Search ---- */

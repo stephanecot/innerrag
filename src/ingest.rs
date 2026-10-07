@@ -472,7 +472,8 @@ pub fn ingest(
         match previous.get(text) {
             Some((emb, found)) => {
                 embeddings.push(emb.clone());
-                mentions.push(found.clone());
+                // Entities kept from an earlier import go through today's noise filter too.
+                mentions.push(found.iter().filter(|m| !state.ner.is_noise(&m.name)).cloned().collect());
             }
             None => {
                 embeddings.push(new_embeddings.next().unwrap_or_default());

@@ -75,13 +75,21 @@ export interface EntitySummary {
 }
 
 export interface EntityDetail extends EntitySummary {
-  neighbours: (EntitySummary & { weight: number })[];
+  neighbours: (EntitySummary & { weight: number; strength: number })[];
   passages: { chunk_id: string; doc_id: string; doc_title: string; doc_status: Status; idx: number; text: string; page: number | null }[];
 }
 
 export interface GraphView {
   nodes: EntitySummary[];
-  edges: { source: string; target: string; weight: number }[];
+  edges: { source: string; target: string; weight: number; strength: number }[];
+}
+
+export interface RelationDetail {
+  a: EntitySummary;
+  b: EntitySummary;
+  weight: number;
+  strength: number;
+  passages: EntityDetail["passages"];
 }
 
 export interface IngestReport {
@@ -317,6 +325,7 @@ export const api = {
       entities: (f: { q?: string; label?: string; limit?: number }) =>
         request<EntitySummary[]>(`${base}/entities${qs(f)}`),
       entity: (id: string) => request<EntityDetail>(`${base}/entities/${enc(id)}`),
+      relation: (a: string, b: string) => request<RelationDetail>(`${base}/relation${qs({ a, b })}`),
       graph: (f: { limit?: number; min_weight?: number; label?: string; include_drafts?: boolean }) =>
         request<GraphView>(`${base}/graph${qs(f)}`),
       neighbourhood: (id: string, limit = 25) =>

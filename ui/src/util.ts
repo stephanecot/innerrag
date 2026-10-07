@@ -127,3 +127,6 @@ export function splitHighlights(text: string, terms: string[]): { text: string; 
     .map((part, i) => ({ text: part, hit: i % 2 === 1 }))
     .filter((p) => p.text);
 }
+
+/** A link strength: a tiny but non-zero value reads "< 0,01" rather than a misleading 0. */
+export const strengthLabel = (n: number) => (n > 0 && n < 0.005 ? "< 0,01" : fr2(n));

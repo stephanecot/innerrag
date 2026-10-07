@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from "react-force-graph-2d";
-import { api, type EntityDetail, type GraphView, type Stats } from "../api";
+import { api, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
 import { href } from "../App";
 import { CloseIcon, SearchIcon } from "../Icons";
-import { cssVar, labelColor, labelName, labelVar, num, plural, splitHighlights, STATUS_LABEL, withAlpha } from "../util";
+import { cssVar, labelColor, labelName, labelVar, num, plural, splitHighlights, STATUS_LABEL, strengthLabel, withAlpha } from "../util";
 
 interface NodeData {
   id: string;
@@ -13,7 +13,7 @@ interface NodeData {
   published: number;
 }
 type GNode = NodeObject<NodeData>;
-type GLink = LinkObject<NodeData, { weight: number }>;
+type GLink = LinkObject<NodeData, { weight: number; strength: number }>;
 
 /** Node radius in graph units: grows with mentions, shrinks gently when zooming in. */
 const radius = (mentions: number, scale: number) =>
@@ -64,6 +64,8 @@ export default function MapView({ project, params }: { project: string; params: 
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(params.get("entity"));
   const [detail, setDetail] = useState<EntityDetail | null>(null);
+  /** A clicked link: why are these two entities connected? */
+  const [relation, setRelation] = useState<RelationDetail | null>(null);
   const [error, setError] = useState("");
   const [find, setFind] = useState("");
   const [loading, setLoading] = useState(true);
@@ -89,7 +91,7 @@ export default function MapView({ project, params }: { project: string; params: 
       if (!replace) for (const l of prev.links) links.set(`${endId(l.source)}|${endId(l.target)}`, l);
       for (const e of view.edges) {
         const k = `${e.source}|${e.target}`;
-        if (!links.has(k)) links.set(k, { source: e.source, target: e.target, weight: e.weight });
+        if (!links.has(k)) links.set(k, { source: e.source, target: e.target, weight: e.weight, strength: e.strength });
       }
       return { nodes: [...byId.values()], links: [...links.values()] };
     });
@@ -165,7 +167,10 @@ export default function MapView({ project, params }: { project: string; params: 
   // Escape closes the side panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelected(null);
+      if (e.key === "Escape") {
+        setSelected(null);
+        setRelation(null);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -371,7 +376,17 @@ export default function MapView({ project, params }: { project: string; params: 
               const alpha = selected === null ? 0.35 : touches ? 0.75 : 0.12;
               return withAlpha(colors.ink, alpha);
             }}
-            linkWidth={(l) => 0.8 + 2.6 * (l.weight / maxWeight)}
+            // Thickness follows the link's strength (specificity), not its raw count.
+            linkWidth={(l) => 0.8 + 4 * Math.sqrt(l.strength ?? l.weight / maxWeight)}
+            linkLabel={(l) => {
+              const a = data.nodes.find((n) => n.id === endId(l.source))?.name ?? endId(l.source);
+              const b = data.nodes.find((n) => n.id === endId(l.target))?.name ?? endId(l.target);
+              return `${a} — ${b} : ${plural(l.weight, "passage en commun", "passages en commun")}, force ${strengthLabel(l.strength ?? 0)}`;
+            }}
+            onLinkClick={(l) => {
+              setSelected(null);
+              p.relation(endId(l.source), endId(l.target)).then(setRelation).catch((e) => setError((e as Error).message));
+            }}
             cooldownTicks={150}
             d3VelocityDecay={0.35}
             maxZoom={6}
@@ -382,13 +397,17 @@ export default function MapView({ project, params }: { project: string; params: 
               }
             }}
             onNodeClick={(node) => {
+              setRelation(null);
               const id = String(node.id);
               const now = Date.now();
               if (lastClick.current.id === id && now - lastClick.current.at < 350) expand(id);
               lastClick.current = { id, at: now };
               setSelected(id);
             }}
-            onBackgroundClick={() => setSelected(null)}
+            onBackgroundClick={() => {
+              setSelected(null);
+              setRelation(null);
+            }}
           />
         </div>
 
@@ -493,6 +512,53 @@ export default function MapView({ project, params }: { project: string; params: 
         )}
       </section>
 
+      {relation && !selected && (
+        <aside className="side" aria-label="Lien entre deux entités">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span className="muted" style={{ fontSize: 14 }}>Pourquoi ce lien ?</span>
+              <h1 className="side-title" style={{ fontSize: 26 }}>
+                <button type="button" className="link-button" style={{ color: "inherit" }} onClick={() => { setRelation(null); setSelected(relation.a.id); }}>{relation.a.name}</button>
+                {" — "}
+                <button type="button" className="link-button" style={{ color: "inherit" }} onClick={() => { setRelation(null); setSelected(relation.b.id); }}>{relation.b.name}</button>
+              </h1>
+            </div>
+            <button type="button" className="icon-button" aria-label="Fermer le panneau" onClick={() => setRelation(null)}>
+              <CloseIcon />
+            </button>
+          </div>
+          <dl className="relation-figures">
+            <div><dt>passages en commun</dt><dd>{num(relation.weight)}</dd></div>
+            <div><dt>force du lien</dt><dd>{strengthLabel(relation.strength)}</dd></div>
+          </dl>
+          <p className="muted" style={{ fontSize: 14 }}>
+            La force est la part des passages citant {relation.a.name} ({num(relation.a.mentions)}) ou {relation.b.name} ({num(relation.b.mentions)})
+            qui citent les deux. Proche de 1 : elles vont toujours ensemble. Proche de 0 : l'une est citée partout, le lien est peu spécifique.
+          </p>
+          <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <h3>Passages qui les citent ensemble</h3>
+            {relation.passages.map((ps) => (
+              <article key={ps.chunk_id} className="passage">
+                <div className="passage-head">
+                  <a href={href("lire", ps.page ? { doc: ps.doc_id, page: String(ps.page) } : { doc: ps.doc_id, tab: "passages" })} style={{ fontWeight: 600 }}>
+                    {ps.doc_title}, {ps.page ? `page ${ps.page}` : `passage ${ps.idx + 1}`}
+                  </a>
+                  <span className={`status status-${ps.doc_status}`}>{STATUS_LABEL[ps.doc_status]}</span>
+                </div>
+                <p>
+                  {splitHighlights(ps.text, [relation.a.name, relation.b.name]).map((part, i) =>
+                    part.hit ? <mark key={i}>{part.text}</mark> : <span key={i}>{part.text}</span>,
+                  )}
+                </p>
+              </article>
+            ))}
+            {relation.weight > relation.passages.length && (
+              <p className="muted" style={{ fontSize: 14 }}>Les {relation.passages.length} premiers sur {num(relation.weight)}.</p>
+            )}
+          </section>
+        </aside>
+      )}
+
       {selected && (
         <aside className="side" aria-label="Entité sélectionnée">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
@@ -522,10 +588,14 @@ export default function MapView({ project, params }: { project: string; params: 
                   <li key={n.id}>
                     <span className="dot" style={{ background: labelVar(n.label) }} />
                     <button type="button" onClick={() => select(n.id)}>{n.name}</button>
-                    <span className="weight" aria-label={plural(n.weight, "passage en commun", "passages en commun")}>
-                      {Array.from({ length: Math.min(n.weight, 6) }, (_, i) => <span key={i} />)}
-                      {n.weight > 6 && <small className="muted">{n.weight}</small>}
-                    </span>
+                    <button
+                      type="button"
+                      className="link-score"
+                      title="Voir les passages qui les citent ensemble"
+                      onClick={() => p.relation(selected, n.id).then((r) => { setSelected(null); setRelation(r); })}
+                    >
+                      {plural(n.weight, "passage", "passages")}, force {strengthLabel(n.strength)}
+                    </button>
                   </li>
                 ))}
               </ul>

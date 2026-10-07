@@ -113,6 +113,7 @@ pub fn router(state: Shared) -> Router {
         .route("/tags", get(tags))
         .route("/entities", get(list_entities))
         .route("/entities/{id}", get(get_entity))
+        .route("/relation", get(get_relation))
         .route("/graph", get(graph))
         .route("/graph/neighbourhood/{id}", get(neighbourhood))
         .route("/search", post(search_handler))
@@ -546,6 +547,23 @@ async fn get_entity(
         });
         outcome
     })
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("entity"))
+}
+
+#[derive(Deserialize)]
+struct RelationQuery {
+    a: String,
+    b: String,
+}
+
+async fn get_relation(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Query(q): Query<RelationQuery>,
+) -> ApiResult<explore::RelationDetail> {
+    in_project(&state, project, move |_, g| explore::relation(g, &q.a, &q.b))
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found("entity"))

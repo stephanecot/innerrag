@@ -77,6 +77,11 @@ impl Ner {
         Ok(Self { model: Mutex::new(model), stopwords })
     }
 
+    /// True for names that are not real entities (stopwords, lowercase common nouns).
+    pub fn is_noise(&self, name: &str) -> bool {
+        is_noise(name, &self.stopwords)
+    }
+
     /// Returns, for each text, its distinct entity mentions.
     pub fn extract(&self, texts: &[String], labels: &[String]) -> Result<Vec<Vec<Mention>>> {
         let model = self.model.lock().map_err(|_| anyhow!("NER model lock poisoned"))?;
