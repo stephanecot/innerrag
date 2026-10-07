@@ -322,7 +322,7 @@ function JobRow({ job, onOpen, onDismiss }: { job: Job; onOpen: () => void; onDi
               ? t("docs.report", {
                 passages: t("common.passages", { n: job.report.chunks }),
                 entities: t("common.entities", { n: job.report.entities }),
-                s: Math.round(job.report.millis / 1000),
+                s: job.report.millis < 1000 ? "< 1" : num(Math.round(job.report.millis / 1000)),
               })
               : job.stage === "failed" || job.stage === "cancelled"
                 ? jobStage(job.stage)

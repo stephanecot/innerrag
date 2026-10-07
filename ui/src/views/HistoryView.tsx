@@ -189,17 +189,17 @@ export default function HistoryView({ projects, current }: { projects: Project[]
         </div>
       )}
       {data && data.totals.calls > PAGE && (
-        <Pager offset={offset} total={data.totals.calls} page={PAGE} onChange={setOffset} />
+        <Pager offset={offset} total={data.totals.calls} page={PAGE} onChange={setOffset} bottom />
       )}
     </section>
   );
 }
 
-function Pager({ offset, total, page, onChange }: { offset: number; total: number; page: number; onChange: (o: number) => void }) {
+function Pager({ offset, total, page, onChange, bottom }: { offset: number; total: number; page: number; onChange: (o: number) => void; bottom?: boolean }) {
   const last = Math.max(0, Math.floor((total - 1) / page) * page);
   const t = useT();
   return (
-    <nav className="toolbar" aria-label={t("history.pagerAria")} style={{ justifyContent: "space-between" }}>
+    <nav className="toolbar" aria-label={t(bottom ? "history.pagerBottomAria" : "history.pagerAria")} style={{ justifyContent: "space-between" }}>
       <div className="toolbar">
         <button type="button" className="btn" disabled={offset === 0} onClick={() => onChange(0)}>{t("history.newest")}</button>
         <button type="button" className="btn" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - page))}>{t("history.prev")}</button>

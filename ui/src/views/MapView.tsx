@@ -543,7 +543,7 @@ export default function MapView({ project, params }: { project: string; params: 
           <button type="button" className="btn" onClick={fit}>{t("map.showAll")}</button>
         </div>
 
-        <aside className="cartouche" aria-label={t("map.summaryAria")}>
+        <section className="cartouche" aria-label={t("map.summaryAria")}>
           <div className="cartouche-head">
             <strong>{project}</strong>
             <span className="muted" style={{ fontSize: 13 }}>{loading ? t("map.loading") : t("map.shown", { n: visible.nodes.length })}</span>
@@ -604,7 +604,7 @@ export default function MapView({ project, params }: { project: string; params: 
             </p>
           )}
           {error && <div className="error-banner" role="alert">{error}</div>}
-        </aside>
+        </section>
 
         {!loading && stats && stats.entities === 0 && (
           <div className="empty" style={{ position: "absolute", inset: 0, justifyContent: "center", pointerEvents: "none" }}>
@@ -637,7 +637,7 @@ export default function MapView({ project, params }: { project: string; params: 
             {t("map.strengthExplain", { a: relation.a.name, na: relation.a.mentions, b: relation.b.name, nb: relation.b.mentions })}
           </p>
           <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <h3>{t("map.citedTogether")}</h3>
+            <h2 className="side-sub">{t("map.citedTogether")}</h2>
             {relation.passages.map((ps) => (
               <article key={ps.chunk_id} className="passage">
                 <div className="passage-head">
@@ -683,7 +683,7 @@ export default function MapView({ project, params }: { project: string; params: 
           </div>
           {detail && detail.documents.length > 0 && (
             <section className="entity-docs" aria-labelledby="entity-docs-title">
-              <h3 id="entity-docs-title">{t("map.inDocuments")}</h3>
+              <h2 id="entity-docs-title" className="side-sub">{t("map.inDocuments")}</h2>
               <ul>
                 {detail.documents.map((d) => {
                   const kind = docKind(d.source);
@@ -735,7 +735,7 @@ export default function MapView({ project, params }: { project: string; params: 
           )}
           {detail && detail.neighbours.length > 0 && (
             <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <h3>{t("map.appearsWith")}</h3>
+              <h2 className="side-sub">{t("map.appearsWith")}</h2>
               <ul className="neighbours">
                 {detail.neighbours.slice(0, allNeighbours ? 50 : 10).map((n) => (
                   <li key={n.id}>
@@ -761,18 +761,18 @@ export default function MapView({ project, params }: { project: string; params: 
           )}
           {detail && (detail.images?.length ?? 0) > 0 && (
             <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <h3>{t("figures.title")}</h3>
+              <h2 className="side-sub">{t("figures.title")}</h2>
               <Figures project={project} images={detail.images ?? []} />
             </section>
           )}
           {detail && detail.passages.length > 0 && (
             <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="toolbar" style={{ justifyContent: "space-between" }}>
-                <h3>
+                <h2 className="side-sub">
                   {docFilter
                     ? t("map.citingIn", { doc: detail.documents.find((d) => d.doc_id === docFilter)?.title ?? "" })
                     : t("map.citing")}
-                </h3>
+                </h2>
                 {docFilter && <button type="button" className="btn" onClick={() => setDocFilter(null)}>{t("map.allDocs")}</button>}
               </div>
               {detail.passages.map((ps) => (

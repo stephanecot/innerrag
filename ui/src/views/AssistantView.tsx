@@ -501,7 +501,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
       </form>
       </div>
 
-      <aside className="chat-side" aria-label={t("chat.sideAria")}>
+      <div className="chat-side" role="group" aria-label={t("chat.sideAria")}>
         <section className="panel chat-side-box">
           <span className={`bridge-status${ready ? " on" : ""}`} role="status">
             {checking
@@ -610,7 +610,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
             <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)} disabled={running}>{t("chat.clearConvs")}</button>
           ))}
         </section>
-      </aside>
+      </div>
       </div>
     </section>
   );

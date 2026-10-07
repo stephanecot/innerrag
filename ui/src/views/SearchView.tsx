@@ -214,7 +214,7 @@ export default function SearchView({ project }: { project: string }) {
           </section>
 
           {result.entities.length > 0 && (
-            <aside className="panel" aria-label={t("search.entitiesAria")} style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16, padding: 20 }}>
+            <section className="panel" aria-label={t("search.entitiesAria")} style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16, padding: 20 }}>
               <h2>{t("search.graphBrought")}</h2>
               {VIA.map(({ key, title, className }) => {
                 const list = result.entities.filter((e) => e.via === key);
@@ -233,7 +233,7 @@ export default function SearchView({ project }: { project: string }) {
                   </div>
                 );
               })}
-            </aside>
+            </section>
           )}
         </div>
       )}
