@@ -130,7 +130,10 @@ export type DocKind = "pdf" | "word" | "powerpoint" | "markdown" | "html" | "tex
 
 /** Kind of a document, from the extension of its source file. */
 export function docKind(source: string): DocKind {
-  const ext = source.toLowerCase().split(/[?#]/)[0].split(".").pop() ?? "";
+  const path = source.toLowerCase().split(/[?#]/)[0];
+  const ext = path.split("/").pop()?.split(".").pop() ?? "";
+  // A web address without a document extension is a page.
+  if (/^https?:\/\//.test(path) && !["pdf", "docx", "doc", "odt", "rtf", "pptx", "ppt", "odp", "md", "markdown", "txt"].includes(ext)) return "html";
   if (ext === "pdf") return "pdf";
   if (ext === "docx" || ext === "doc" || ext === "odt" || ext === "rtf") return "word";
   if (ext === "pptx" || ext === "ppt" || ext === "odp") return "powerpoint";

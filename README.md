@@ -2,7 +2,7 @@
 
 A **Graph RAG** server that runs entirely on your machine. It is written in Rust and built on **LadybugDB**, an embedded graph database forked from Kuzu. Everything ships in one Docker image, models included: no external API calls and no cost per query.
 
-- **Formats**: PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Markdown (front matter included), HTML and plain text.
+- **Formats**: PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Markdown (front matter included), HTML and plain text, uploaded or fetched from a web address.
 - **Asynchronous ingestion**:
   - text extraction, then chunking that follows the headings;
   - multilingual embeddings (e5-small) and zero-shot entity extraction (GLiNER);
@@ -100,7 +100,7 @@ You can swap them at build time with `--build-arg EMBED_REPO=… EMBED_FILE=… 
 | PowerPoint `.pptx` | One section per slide, in presentation order, with the title and the speaker notes |
 | `.doc`, `.ppt` (97-2003) | `catdoc` / `catppt` (plain text) |
 | Markdown | Front matter `title`, `tags`, `status`; `#` headings |
-| HTML, text | HTML converted to simple Markdown; text as is |
+| HTML, text | HTML converted to simple Markdown, keeping the page's main content (see below); text as is |
 
 How a PDF is converted:
 
@@ -130,6 +130,14 @@ How a PDF is converted:
 curl -F "file=@report.pdf" -F "tags=finance,2026" -F "status=DRAFT" \
      http://localhost:8080/api/projects/my-project/documents/upload
 ```
+
+**From a web address.** In Documents, "Add a document" › "Web address" (or `POST …/documents/url`, the `ingest_url` MCP tool, `innerrag.py ingest-url`). The server downloads the page or file (http or https, 30 s, up to `INNERRAG_MAX_UPLOAD_MB`), then:
+
+- a web page keeps its main content: `<main>`, else its articles, else the body, without menus, sidebars, headers and footers, forms, tables of contents or cookie banners (recognised by tag, role, id or class);
+- a PDF, Word or PowerPoint file is converted like an uploaded one;
+- the title is the page's own (`og:title`, `<title>`, first `<h1>`), the source is the address, and the document id is derived from it (`url/example.com/docs/install`): the same address ingested again replaces the document.
+
+The server needs network access to the address; nothing else in innerrag does.
 
 **Watched folders.** Mount a folder under `/watch` (for example a repository's `docs/`) and attach it to a project from the Projects page. Its files are imported, then kept in sync every 30 seconds; only changed passages are recomputed.
 
@@ -194,6 +202,7 @@ All project routes live under `/api/projects/{project}`.
 | GET | `…/stats`, `…/tags` | Counts, tags |
 | GET, POST | `…/documents` | List (`?status=&tag=&q=`), add JSON text (409 if the id exists) |
 | POST | `…/documents/upload` | Add a file (multipart: `file`, and optionally `title`, `id`, `tags`, `status`, `source`) |
+| POST | `…/documents/url` | Add or replace a web page or online file: `{"url","title?","id?","tags?","status?"}` |
 | GET, PUT, PATCH, DELETE | `…/documents/{id}` | Read, replace with text (re-indexes), edit metadata, delete |
 | PUT | `…/documents/{id}/upload` | Replace with a file |
 | GET | `…/documents/{id}/content` | Full text as Markdown (with `<!-- page N -->` markers for a PDF) |
@@ -223,7 +232,7 @@ A text document body is `{"text","title?","id?","source?","tags?":[],"status?":"
 
 - search and read: `search_knowledge`, `read_passages`, `cite_sources`;
 - graph: `explore_entity`, `explore_relation`, `graph_stats`, `run_cypher`;
-- documents: `list_documents`, `ingest_document` (text), `ingest_file` (base64 file), `ingestion_status`.
+- documents: `list_documents`, `ingest_document` (text), `ingest_file` (base64 file), `ingest_url` (web page or online file), `ingestion_status`.
 
 Ingestions answer right away with a job, unless `wait: true` is passed (waits up to 2 minutes).
 

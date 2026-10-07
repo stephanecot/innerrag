@@ -104,7 +104,10 @@ pub fn extract(filename: &str, bytes: &[u8]) -> Result<(Format, Extracted)> {
         Format::Pptx => pptx(bytes).map_err(|e| Invalid(format!("cannot read PowerPoint file `{filename}`: {e:#}")))?,
         Format::Doc => Extracted { text: run_tool("catdoc", &["-w", "-d", "utf-8"], bytes, "doc", &[])?, ..Default::default() },
         Format::Ppt => Extracted { text: run_tool("catppt", &["-d", "utf-8"], bytes, "ppt", &[])?, ..Default::default() },
-        Format::Html => Extracted { text: html_to_markdown(&String::from_utf8_lossy(bytes)), ..Default::default() },
+        Format::Html => {
+            let html = String::from_utf8_lossy(bytes);
+            Extracted { title: html_title(&html), text: html_to_markdown(main_region(&html)), ..Default::default() }
+        }
         Format::Markdown | Format::Text => {
             let raw = String::from_utf8_lossy(bytes);
             Extracted { text: raw.trim_start_matches('\u{feff}').to_string(), ..Default::default() }
@@ -243,11 +246,103 @@ fn decode_entities(s: &str) -> String {
 
 /// Small HTML to markdown conversion: headings, paragraphs, lists, table rows; scripts,
 /// styles and the document head are dropped. Enough for saved web pages and exports.
+/// Title of an HTML page: its `og:title`, else `<title>`, else its first `<h1>`.
+pub fn html_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let clean = |s: &str| {
+        let text = html_to_markdown(s);
+        let t = text.split_whitespace().collect::<Vec<_>>().join(" ").trim_start_matches('#').trim().to_string();
+        (!t.is_empty() && t.chars().count() <= 200).then_some(t)
+    };
+    if let Some(p) = lower.find("property=\"og:title\"").or_else(|| lower.find("property='og:title'")) {
+        let tag_start = lower[..p].rfind('<').unwrap_or(p);
+        let tag_end = lower[p..].find('>').map_or(lower.len(), |e| p + e);
+        let tag = &html[tag_start..tag_end];
+        if let Some(c) = tag.to_ascii_lowercase().find("content=") {
+            let rest = &tag[c + 8..];
+            let quote = rest.chars().next().filter(|q| *q == '"' || *q == '\'');
+            if let Some(q) = quote {
+                if let Some(end) = rest[1..].find(q) {
+                    if let Some(t) = clean(&rest[1..1 + end]) {
+                        return Some(t);
+                    }
+                }
+            }
+        }
+    }
+    for (open, close) in [("<title", "</title>"), ("<h1", "</h1>")] {
+        if let Some(start) = lower.find(open) {
+            let body = start + lower[start..].find('>').map_or(0, |g| g + 1);
+            if let Some(end) = lower[body..].find(close) {
+                if let Some(t) = clean(&html[body..body + end]) {
+                    return Some(t);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The main content of a page: its `<main>`, else its articles, else its `<body>`; menus,
+/// headers and footers around it are left out.
+pub fn main_region(html: &str) -> &str {
+    let lower = html.to_ascii_lowercase();
+    let opening = |tag: &str| {
+        lower.match_indices(&format!("<{tag}")).map(|(i, _)| i).find(|&i| {
+            lower[i + tag.len() + 1..].starts_with(|c: char| c == '>' || c.is_ascii_whitespace())
+        })
+    };
+    for tag in ["main", "article", "body"] {
+        if let (Some(start), Some(end)) = (opening(tag), lower.rfind(&format!("</{tag}>"))) {
+            let inner = start + lower[start..].find('>').map_or(0, |g| g + 1);
+            // Too little text in <main> or <article>: a shell filled by scripts, keep the body.
+            if end > inner && (tag == "body" || html_to_markdown(&html[inner..end]).len() > 200) {
+                return &html[inner..end];
+            }
+        }
+    }
+    html
+}
+
+/// An element that is page furniture by its role, id or class: navigation, menus, sidebars,
+/// tables of contents, cookie banners, sharing buttons, category lists…
+fn is_furniture(tag: &str) -> bool {
+    const ROLES: [&str; 5] = ["navigation", "banner", "contentinfo", "complementary", "search"];
+    const WORDS: [&str; 23] = [
+        "navbox", "navbar", "navigation", "menu", "sidebar", "breadcrumb", "cookie", "consent", "banner",
+        "catlinks", "printfooter", "portlet", "toc", "share", "social", "newsletter", "related", "advert",
+        "promo", "skip-link", "language", "comments", "editsection",
+    ];
+    let attr = |name: &str| {
+        let key = format!("{name}=");
+        tag.find(&key).map(|p| {
+            let rest = &tag[p + key.len()..];
+            let quote = rest.chars().next().filter(|q| *q == '"' || *q == '\'');
+            match quote {
+                Some(q) => rest[1..].split(q).next().unwrap_or("").to_string(),
+                None => rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or("").to_string(),
+            }
+        })
+    };
+    if attr("role").is_some_and(|r| ROLES.contains(&r.trim())) || attr("aria-hidden").as_deref() == Some("true") {
+        return true;
+    }
+    let names = format!("{} {}", attr("id").unwrap_or_default(), attr("class").unwrap_or_default());
+    names
+        .split(|c: char| c.is_whitespace())
+        .filter(|n| !n.is_empty())
+        .any(|n| WORDS.iter().any(|w| n == *w || n.starts_with(&format!("{w}-")) || n.ends_with(&format!("-{w}")) || n.contains(&format!("-{w}-"))))
+}
+
+const VOID_TAGS: [&str; 14] = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+
 pub fn html_to_markdown(html: &str) -> String {
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let mut out = String::new();
     let mut i = 0;
     let mut skip_until: Option<&str> = None;
+    // Inside a furniture element: its tag name and how deeply the same tag is nested.
+    let mut furniture: Option<(String, usize)> = None;
     while i < html.len() {
         if let Some(close) = skip_until {
             match lower[i..].find(close) {
@@ -260,23 +355,58 @@ pub fn html_to_markdown(html: &str) -> String {
             continue;
         }
         let Some(lt) = html[i..].find('<') else {
-            out.push_str(&html[i..]);
+            if furniture.is_none() {
+                out.push_str(&html[i..]);
+            }
             break;
         };
-        out.push_str(&html[i..i + lt]);
+        if furniture.is_none() {
+            out.push_str(&html[i..i + lt]);
+        }
         i += lt;
         let Some(gt) = html[i..].find('>') else { break };
         let tag = lower[i + 1..i + gt].trim();
         i += gt + 1;
         let closing = tag.starts_with('/');
         let name: String = tag.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        let self_closing = tag.ends_with('/') || VOID_TAGS.contains(&name.as_str());
+        if let Some((skipped, depth)) = furniture.as_mut() {
+            // Drop everything until the furniture element closes (text included).
+            if *skipped == name && !self_closing {
+                if closing {
+                    *depth -= 1;
+                } else {
+                    *depth += 1;
+                }
+            }
+            if *depth == 0 {
+                furniture = None;
+            }
+            continue;
+        }
+        if !closing && !self_closing && !name.is_empty() && is_furniture(tag) {
+            furniture = Some((name, 1));
+            continue;
+        }
         match name.as_str() {
-            "script" | "style" | "head" | "noscript" | "svg" if !closing => {
+            // Code, page furniture and controls carry no content.
+            "script" | "style" | "head" | "noscript" | "svg" | "nav" | "aside" | "footer" | "form" | "template"
+            | "iframe" | "select" | "button"
+                if !closing && !tag.ends_with('/') =>
+            {
                 skip_until = Some(match name.as_str() {
                     "script" => "</script>",
                     "style" => "</style>",
                     "head" => "</head>",
                     "noscript" => "</noscript>",
+                    "nav" => "</nav>",
+                    "aside" => "</aside>",
+                    "footer" => "</footer>",
+                    "form" => "</form>",
+                    "template" => "</template>",
+                    "iframe" => "</iframe>",
+                    "select" => "</select>",
+                    "button" => "</button>",
                     _ => "</svg>",
                 });
             }
@@ -1111,6 +1241,26 @@ mod tests {
         let (_, e) = extract("notes.txt", "Configuration\n# commentaire de code\nsuite".as_bytes()).unwrap();
         assert!(!e.structured);
         assert_eq!(e.title, None);
+    }
+
+    #[test]
+    fn web_page_keeps_main_content() {
+        let page = r#"<html><head><title>Guide &amp; FAQ | Example</title>
+            <meta property="og:title" content="Install guide"></head><body>
+            <nav><a href="/">Home</a> <a href="/blog">Blog</a></nav>
+            <main><h1>Installing</h1><p>Run the installer, then restart the machine so the service starts.</p>
+            <aside>Related posts</aside><p>The service listens on port 8080 once it has started properly.</p>
+            <form><input name="q"><button>Search</button></form></main>
+            <div class="navbox"><div>Related <b>topics</b></div> Graph, Tree</div>
+            <footer>© Example 2026</footer></body></html>"#;
+        assert_eq!(html_title(page).as_deref(), Some("Install guide"));
+        let text = html_to_markdown(main_region(page));
+        assert!(text.contains("# Installing") && text.contains("port 8080"), "{text}");
+        assert!(!text.contains("Home") && !text.contains("Related") && !text.contains("Search") && !text.contains("2026"), "{text}");
+        assert!(!text.contains("Tree"), "{text}");
+        assert!(is_furniture(r#"div id="catlinks" class="catlinks""#) && is_furniture(r#"ul role="navigation""#));
+        assert!(!is_furniture(r#"div class="mw-content-text""#) && !is_furniture(r#"div class="tocolor""#));
+        assert_eq!(html_title("<title>Guide &amp; FAQ</title>").as_deref(), Some("Guide & FAQ"));
     }
 
     #[test]

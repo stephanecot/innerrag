@@ -48,7 +48,7 @@ READ_TOOLS = [
     "list_projects",
     "ingestion_status",
 ]
-WRITE_TOOLS = ["ingest_document", "ingest_file"]
+WRITE_TOOLS = ["ingest_document", "ingest_file", "ingest_url"]
 AGENTS = ("claude", "copilot")
 PROJECT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")

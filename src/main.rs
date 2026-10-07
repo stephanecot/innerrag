@@ -19,6 +19,7 @@ mod projects;
 mod rerank;
 mod search;
 mod watch;
+mod web;
 
 use std::sync::Arc;
 use std::time::Instant;

@@ -326,6 +326,8 @@ export const api = {
         request<Job>(`${base}/documents`, { method: "POST", body: JSON.stringify(body) }),
       replaceDocument: (id: string, body: object) =>
         request<Job>(`${base}/documents/${enc(id)}`, { method: "PUT", body: JSON.stringify(body) }),
+      ingestUrl: (body: { url: string; title?: string; tags?: string[]; status?: Status; id?: string }) =>
+        request<Job>(`${base}/documents/url`, { method: "POST", body: JSON.stringify(body) }),
       uploadDocument: (file: File, fields: Record<string, string | undefined>) =>
         request<Job>(`${base}/documents/upload`, { method: "POST", body: form(file, fields) }),
       uploadReplace: (id: string, file: File, fields: Record<string, string | undefined>) =>

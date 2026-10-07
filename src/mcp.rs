@@ -231,6 +231,21 @@ fn tools(with_project_arg: bool) -> Value {
             }
         },
         {
+            "name": "ingest_url",
+            "description": "Adds a web page (or a PDF, Word, PowerPoint or Markdown file) to the project from its address: the server downloads it and, for a page, keeps the main content (no menus, sidebars or footers). The same address ingested again replaces the document. Ingestion runs in the background: follow it with ingestion_status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "http or https address, reachable from the innerrag server." },
+                    "title": { "type": "string", "description": "Defaults to the page's own title." },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "status": { "type": "string", "enum": ["DRAFT", "PUBLISHED"] },
+                    "wait": { "type": "boolean", "description": "Wait (up to ~2 min) for the result." }
+                },
+                "required": ["url"]
+            }
+        },
+        {
             "name": "ingestion_status",
             "description": "Progress of background ingestions: one job by id, or the recent jobs of the project.",
             "inputSchema": {
@@ -365,6 +380,21 @@ fn call_tool(state: &Shared, project: &str, name: &str, args: &Value) -> anyhow:
                 bytes,
                 ingest::FileFields {
                     id: args.get("id").and_then(Value::as_str).map(str::to_string),
+                    title: args.get("title").and_then(Value::as_str).map(str::to_string),
+                    tags: arg_strings(args, "tags"),
+                    status: args.get("status").and_then(Value::as_str).map(str::to_string),
+                    ..Default::default()
+                },
+            )?;
+            return queue(state, project, req, &filename, wait);
+        }
+        "ingest_url" => {
+            let url = arg_str(args, "url")?;
+            let max = state.config.max_upload_mb as u64 * 1024 * 1024;
+            let (req, filename) = crate::web::url_request(
+                &url,
+                max,
+                ingest::FileFields {
                     title: args.get("title").and_then(Value::as_str).map(str::to_string),
                     tags: arg_strings(args, "tags"),
                     status: args.get("status").and_then(Value::as_str).map(str::to_string),

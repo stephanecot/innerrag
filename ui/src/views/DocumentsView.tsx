@@ -391,7 +391,8 @@ function NewDocument({
   project, config, onClose, onQueued,
 }: { project: string; config: ServerConfig | null; onClose: () => void; onQueued: (job: Job) => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [pasting, setPasting] = useState(false);
+  const [kind, setKind] = useState<"file" | "url" | "text">("file");
+  const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [id, setId] = useState("");
   const [source, setSource] = useState("");
@@ -409,9 +410,12 @@ function NewDocument({
     setError("");
     try {
       const p = api.project(project);
-      const job = file
-        ? await p.uploadDocument(file, { title, tags: tags.join(","), status, id: id.trim(), source: source.trim() })
-        : await p.createDocument({ title, text, tags, status, id: id.trim() || undefined, source: source.trim() || undefined });
+      const job =
+        kind === "url"
+          ? await p.ingestUrl({ url: url.trim(), title: title || undefined, tags, status, id: id.trim() || undefined })
+          : kind === "file" && file
+            ? await p.uploadDocument(file, { title, tags: tags.join(","), status, id: id.trim(), source: source.trim() })
+            : await p.createDocument({ title, text, tags, status, id: id.trim() || undefined, source: source.trim() || undefined });
       onQueued(job);
     } catch (err) {
       setError((err as Error).message);
@@ -420,7 +424,12 @@ function NewDocument({
     }
   };
 
-  const ready = file ? file.size <= maxMb * 1024 * 1024 : pasting && text.trim().length > 0;
+  const ready =
+    kind === "file"
+      ? !!file && file.size <= maxMb * 1024 * 1024
+      : kind === "url"
+        ? /^https?:\/\/\S+\.\S+/i.test(url.trim())
+        : text.trim().length > 0;
 
   return (
     <aside className="side" aria-labelledby="new-title">
@@ -429,19 +438,43 @@ function NewDocument({
         <button type="button" className="btn" onClick={onClose}>{t("common.cancel")}</button>
       </div>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {pasting ? (
+        <div className="segmented" role="group" aria-label={t("docs.sourceKind")} style={{ alignSelf: "flex-start" }}>
+          {(["file", "url", "text"] as const).map((k) => (
+            <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>
+              {t(k === "file" ? "docs.kindFile" : k === "url" ? "docs.kindUrl" : "docs.kindText")}
+            </button>
+          ))}
+        </div>
+        {kind === "text" && (
           <div className="field">
             <label htmlFor="new-doc-text">{t("docs.text")}</label>
             <textarea id="new-doc-text" className="textarea" rows={10} required value={text} onChange={(e) => setText(e.target.value)} />
             <span className="hint">{t("docs.mdHint")}</span>
-            <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(false)}>{t("docs.importInstead")}</button>
           </div>
-        ) : (
+        )}
+        {kind === "url" && (
+          <div className="field">
+            <label htmlFor="new-doc-url">{t("docs.url")}</label>
+            <input
+              id="new-doc-url"
+              className="input"
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              required
+              placeholder="https://"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              aria-describedby="new-doc-url-hint"
+            />
+            <span id="new-doc-url-hint" className="hint">{t("docs.urlHint")}</span>
+          </div>
+        )}
+        {kind === "file" && (
           <div className="field">
             <span className="label">{t("docs.file")}</span>
             <FileDrop file={file} onFile={setFile} maxMb={maxMb} />
             {file && file.size > maxMb * 1024 * 1024 && <span className="danger-text hint">{t("docs.tooBig", { mb: maxMb })}</span>}
-            {!file && <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(true)}>{t("docs.pasteInstead")}</button>}
           </div>
         )}
         <div className="field">

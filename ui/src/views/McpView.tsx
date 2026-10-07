@@ -6,7 +6,7 @@ import { useT, type Key, type T } from "../i18n";
 /** Tools with a plain-words guide (mcp.guide.<tool>.short/what/when). The server's own (English) description is what agents read. */
 const GUIDED = new Set([
   "search_knowledge", "read_passages", "cite_sources", "explore_entity", "explore_relation",
-  "graph_stats", "run_cypher", "list_documents", "ingest_document", "ingest_file", "ingestion_status", "list_projects",
+  "graph_stats", "run_cypher", "list_documents", "ingest_document", "ingest_file", "ingest_url", "ingestion_status", "list_projects",
 ]);
 
 function guide(t: T, tool: string): { short: string; what: string; when: string } | undefined {
@@ -25,13 +25,13 @@ const GROUPS: { title: Key; intro?: Key; tools: string[] }[] = [
   {
     title: "mcp.group.docs",
     intro: "mcp.group.docsIntro",
-    tools: ["list_documents", "ingest_document", "ingest_file", "ingestion_status"],
+    tools: ["list_documents", "ingest_document", "ingest_file", "ingest_url", "ingestion_status"],
   },
   { title: "mcp.group.projects", tools: ["list_projects"] },
 ];
 
 /** Tools that change the base: documented here, not tried from this page. */
-const WRITES = new Set(["ingest_document", "ingest_file"]);
+const WRITES = new Set(["ingest_document", "ingest_file", "ingest_url"]);
 
 const TYPES = new Set(["string", "integer", "number", "boolean", "array"]);
 

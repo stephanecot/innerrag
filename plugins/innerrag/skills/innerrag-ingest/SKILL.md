@@ -1,6 +1,6 @@
 ---
 name: innerrag-ingest
-description: Add or replace documents in an innerrag knowledge base — PDF, Word (.docx/.doc), PowerPoint (.pptx/.ppt), Markdown and text files, whole folders, or text from the conversation. Use when the user asks to ingest, index, import, add, upload, re-index or replace documents ("ajoute ce PDF", "indexe le dossier docs", "importe la présentation", "remplace la version", "mets à jour la base"), with optional status (draft/published) and tags.
+description: Add or replace documents in an innerrag knowledge base — PDF, Word (.docx/.doc), PowerPoint (.pptx/.ppt), HTML, Markdown and text files, whole folders, web pages by URL, or text from the conversation. Use when the user asks to ingest, index, import, add, upload, re-index or replace documents ("ajoute ce PDF", "indexe le dossier docs", "importe la présentation", "remplace la version", "mets à jour la base"), with optional status (draft/published) and tags.
 allowed-tools: Bash(python3 *innerrag.py*)
 ---
 
@@ -27,6 +27,19 @@ python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" -p <project> ingest docs
 - Markdown front matter (`title`, `tags`, `status`) is honoured when the options are not given.
 - Status: `--status draft|published`; default is the server setting (usually PUBLISHED).
   Drafts are indexed and visible in the UI but excluded from search unless asked.
+
+## Web pages and online files
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" -p <project> ingest-url https://example.com/docs/install https://example.com/spec.pdf --tags web
+```
+
+- The innerrag server downloads each address (it must be reachable from the server), then
+  treats it like an uploaded file: a page keeps its main content only (no menus, sidebars,
+  footers, forms, tables of contents), a PDF or Word file is converted as usual.
+- The document id is derived from the address (`url/example.com/docs/install`): ingesting the
+  same address again **replaces** it. The source is the address; the title is the page's own
+  title unless `--title` is given.
 
 ## Text from the conversation
 

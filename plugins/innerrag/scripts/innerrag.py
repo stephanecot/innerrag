@@ -243,6 +243,26 @@ def cmd_ingest(args):
     out(reports)
 
 
+def cmd_ingest_url(args):
+    """Ingests web pages or online files by address; the same address again replaces the document."""
+    status = args.status.upper() if args.status else None
+    jobs = []
+    for url in args.urls:
+        body = {"url": url, "title": args.title, "tags": tags_arg(args.tags), "status": status, "id": args.id}
+        job = call("POST", p(args, "/documents/url"), {k: v for k, v in body.items() if v is not None})
+        print(f"queued {job['document_id']} (job {job['id']})", file=sys.stderr)
+        jobs.append(job)
+    if args.no_wait:
+        out(jobs)
+        return
+    reports = []
+    for job in jobs:
+        report = wait_job(job)
+        print(f"ingested {report['id']}: {report['chunks']} chunks, {report['entities']} entities", file=sys.stderr)
+        reports.append(report)
+    out(reports)
+
+
 def cmd_jobs(args):
     out(call("GET", "/api/jobs", query={"project": args.project or ""}))
 
@@ -396,6 +416,15 @@ def main():
     s.add_argument("--source")
     s.add_argument("--root", help="base folder for ids derived from paths (default: cwd)")
     s.set_defaults(fn=cmd_ingest)
+
+    s = sub.add_parser("ingest-url", help="add or replace web pages or online files (PDF, Word…) by address")
+    s.add_argument("urls", nargs="+")
+    s.add_argument("--no-wait", action="store_true", help="queue and return the jobs without waiting")
+    s.add_argument("--id", help="document id (single address; default: derived from the address)")
+    s.add_argument("--title", help="document title (single address; default: the page's title)")
+    s.add_argument("--tags", help="comma-separated tags")
+    s.add_argument("--status", choices=["draft", "published", "DRAFT", "PUBLISHED"])
+    s.set_defaults(fn=cmd_ingest_url)
 
     sub.add_parser("jobs", help="recent background ingestions (all projects, or --project)").set_defaults(fn=cmd_jobs)
     s = sub.add_parser("job-cancel", help="cancel a queued or running ingestion")

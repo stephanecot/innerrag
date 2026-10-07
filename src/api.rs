@@ -102,6 +102,7 @@ pub fn router(state: Shared) -> Router {
         .route("/stats", get(stats))
         .route("/documents", get(list_documents).post(create_document))
         .route("/documents/upload", post(upload_document))
+        .route("/documents/url", post(ingest_url))
         .route(
             "/documents/{id}",
             get(get_document).put(replace_document).patch(patch_document).delete(delete_document),
@@ -393,6 +394,35 @@ async fn upload_replace(
     })
     .await?;
     job_response(&state, job, w.wait, false).await
+}
+
+#[derive(Deserialize)]
+struct UrlBody {
+    url: String,
+    id: Option<String>,
+    title: Option<String>,
+    tags: Option<Vec<String>>,
+    status: Option<String>,
+}
+
+/// Downloads a web page (or a PDF, Word… file) from its address and ingests it. The same address
+/// ingested again replaces the document (its id is derived from the URL unless one is given).
+async fn ingest_url(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Path(project): Path<String>,
+    Query(w): Query<WaitQuery>,
+    Json(body): Json<UrlBody>,
+) -> Result<Response, ApiError> {
+    let ch = channel(&headers);
+    let job = blocking(&state, move |s| {
+        let max = s.config.max_upload_mb as u64 * 1024 * 1024;
+        let fields = ingest::FileFields { id: body.id, title: body.title, tags: body.tags, status: body.status, ..Default::default() };
+        let (req, filename) = crate::web::url_request(&body.url, max, fields)?;
+        ingest::submit(s, &project, req, Mode::Upsert, ch, &filename)
+    })
+    .await?;
+    job_response(&state, job, w.wait, true).await
 }
 
 #[derive(Deserialize)]
