@@ -273,7 +273,7 @@ py scripts\chat-bridge.py                # Windows
 
 ## Claude Code plugin (skills)
 
-The repository is also a Claude Code marketplace. The `innerrag` plugin brings the MCP server and six skills: search, ingestion, documents, projects, graph exploration and usage. They rely on a small dependency-free Python CLI (`plugins/innerrag/scripts/innerrag.py`).
+The repository is also a Claude Code marketplace. The `innerrag` plugin brings the MCP server and seven skills: search, ingestion, documents, projects, graph exploration, usage, and spec compliance. They rely on a small dependency-free Python CLI (`plugins/innerrag/scripts/innerrag.py`).
 
 ```
 /plugin marketplace add /path/to/innerrag
@@ -281,6 +281,15 @@ The repository is also a Claude Code marketplace. The `innerrag` plugin brings t
 ```
 
 The plugin reads `INNERRAG_URL` (default `http://localhost:8080`) and `INNERRAG_PROJECT`.
+
+**Spec compliance report** (`innerrag-spec-check`). Ask Claude Code, in the repository to check, something like "compare this code with the specs in innerrag and give me the PDF report":
+
+1. it reads the specifications stored in innerrag (by default the documents tagged `spec`);
+2. it breaks them down into numbered requirements, each with its source (document, section, page);
+3. it looks for evidence of each one in the code and gives it a status: compliant, partial, non-compliant or not verifiable, with a severity for the gaps;
+4. it writes the analysis as JSON, and `scripts/spec_report.py` renders it into a PDF.
+
+The PDF always has the same layout: header (project, repository, commit, specifications), summary with the compliance rate, requirements table, gaps in detail, code missing from the specifications, method and limits. It is in English or French, as asked; the JSON kept next to it re-renders the report in the other language (`spec_report.py analysis.json --lang en`). The PDF is printed by a local Chrome, Chromium or Edge; `spec_report.py --example` shows the expected JSON.
 
 ## Development
 

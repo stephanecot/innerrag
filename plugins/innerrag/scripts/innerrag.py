@@ -260,6 +260,16 @@ def cmd_doc(args):
     out(call("GET", p(args, f"/documents/{urllib.parse.quote(args.id, safe='')}")))
 
 
+def cmd_content(args):
+    """Full text of a document as Markdown (PDFs keep <!-- page N --> markers)."""
+    res = call("GET", p(args, f"/documents/{urllib.parse.quote(args.id, safe='')}/content"))
+    content = res.get("content") or ""
+    if not content.lstrip().startswith("#"):
+        sys.stdout.write(f"# {res.get('title', args.id)}\n\n")
+    sys.stdout.write(content)
+    sys.stdout.write("\n")
+
+
 def cmd_doc_set(args):
     patch = {}
     if args.title is not None:
@@ -400,6 +410,10 @@ def main():
     s = sub.add_parser("doc", help="show a document with its passages")
     s.add_argument("id")
     s.set_defaults(fn=cmd_doc)
+
+    s = sub.add_parser("content", help="full text of a document as Markdown, with page markers for PDFs")
+    s.add_argument("id")
+    s.set_defaults(fn=cmd_content)
     s = sub.add_parser("doc-set", help="change title, status, tags or source (no re-indexing)")
     s.add_argument("id")
     s.add_argument("--title")

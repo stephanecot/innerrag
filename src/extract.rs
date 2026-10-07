@@ -122,7 +122,7 @@ pub fn extract(filename: &str, bytes: &[u8]) -> Result<(Format, Extracted)> {
     // A PDF's first big heading is usually a cover line: its title comes from its
     // properties, else the file name.
     if out.structured && format != Format::Pdf {
-        out.title = out.title.or_else(|| first_heading(&out.text));
+        out.title = out.title.or_else(|| first_heading(&out.text).filter(|h| !is_generic_heading(h)));
     }
     if out.text.trim().is_empty() {
         let hint = if format == Format::Pdf { " (scanned PDF? text recognition is not supported)" } else { "" };
@@ -179,6 +179,19 @@ pub fn front_matter(text: &str) -> FrontMatter {
     fm.tags.retain(|t| !t.is_empty());
     fm.body = lines[end + 1..].join("\n");
     fm
+}
+
+/// Headings that open many documents without naming them ("Introduction", "Sommaire"…): the
+/// file name is a better title.
+pub fn is_generic_heading(heading: &str) -> bool {
+    const GENERIC: &[&str] = &[
+        "introduction", "sommaire", "table des matières", "table des matieres", "contents", "table of contents", "overview",
+        "summary", "résumé", "resume", "préambule", "preambule", "avant-propos", "foreword", "preface", "préface", "contexte",
+        "context", "objet", "purpose", "scope", "périmètre", "historique", "historique des versions", "suivi des versions",
+        "version history", "revision history", "document history", "document control", "glossaire", "glossary", "abstract",
+    ];
+    let h = heading.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').trim().to_lowercase();
+    GENERIC.contains(&h.trim_end_matches([':', '.']).trim())
 }
 
 pub fn first_heading(text: &str) -> Option<String> {
@@ -1098,6 +1111,14 @@ mod tests {
         let (_, e) = extract("notes.txt", "Configuration\n# commentaire de code\nsuite".as_bytes()).unwrap();
         assert!(!e.structured);
         assert_eq!(e.title, None);
+    }
+
+    #[test]
+    fn generic_headings_are_not_titles() {
+        assert!(is_generic_heading("Introduction"));
+        assert!(is_generic_heading("1. Introduction"));
+        assert!(is_generic_heading("Table of Contents"));
+        assert!(!is_generic_heading("Global Capacity Management Tool"));
     }
 
     #[test]

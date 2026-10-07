@@ -231,7 +231,10 @@ pub fn file_request(filename: &str, bytes: Vec<u8>, fields: FileFields) -> Resul
         Some(s) => Some(Status::parse(&s)?),
         None => None,
     };
-    let stem = std::path::Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or("document").to_string();
+    // "LLD _GCMT_MRP.docx" → "LLD GCMT MRP".
+    let stem = std::path::Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+    let stem = stem.replace('_', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    let stem = if stem.is_empty() { "document".to_string() } else { stem };
     let mut metadata = fields.metadata.filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}));
     metadata["file"] = serde_json::json!({
         "name": filename,
