@@ -1,4 +1,5 @@
 mod api;
+mod cache;
 mod chunk;
 mod code;
 mod config;

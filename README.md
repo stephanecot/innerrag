@@ -146,6 +146,7 @@ Contexte à la taille voulue (`search_knowledge`, et `POST /api/projects/{p}/sea
 - `budget` : plafond en tokens ; les passages moins bien classés sont écartés et comptés.
 - `session_id` : un passage déjà envoyé dans la session n'est pas renvoyé.
 - Les passages quasi identiques (cosinus ≥ 0,95) sont toujours écartés.
+- Cache par projet : une recherche identique (mêmes question et réglages, données inchangées) répond en moins d'une milliseconde au lieu d'environ 450 ms ; les scores du cross-encoder sont réutilisés quand seuls `k`, `mode` ou `budget` changent. Toute écriture invalide le cache. La réponse porte `cached: true`.
 
 Boucle de citation : une fois sa réponse écrite, l'agent appelle `cite_sources(question, chunk_ids, outcome)`. La page « Lacunes » regroupe par sens les questions restées sans réponse (recherches sans passage pertinent et signalements des agents) et propose les réponses citées comme questions de référence pour `eval.json`. Recherches et citations sont enregistrées dans `feedback.jsonl`, dans le dossier du projet.
 

@@ -109,6 +109,8 @@ Un fichier `.lbdb` binaire versionné dans git ne se fusionne pas. Si deux perso
 
 ### 11. Cache des recherches (effort S, proposé par l'utilisateur)
 
+**Fait le 7 octobre 2026** : recherche répétée en moins d'1 ms au lieu de 482 ms ; changer k réutilise les scores du cross-encoder (210 ms au lieu de 482).
+
 - **Problème** : une recherche prend environ 450 ms sur CPU, mesurés le 7 octobre 2026 sur le livre (2 448 passages, 8 cœurs). Le reclassement par cross-encoder en prend environ 360, l'extraction d'entités de la question environ 70, le reste environ 15. Les agents répètent souvent la même recherche : nouvel essai, mode map puis full, même question posée par plusieurs personnes.
 - **Comment** :
   - cache des réponses par projet, avec pour clé la question normalisée et les paramètres, invalidé par un numéro de version du projet incrémenté à chaque ingestion ou suppression. Une recherche répétée répond en environ 1 ms ;

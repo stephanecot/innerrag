@@ -478,6 +478,7 @@ fn run_tool(
                 mode: None,
                 budget: None,
                 session_id: None,
+                cache: None,
             };
             let res = search::search(state, graph, req)?;
             crate::feedback::record_search(graph, &res.query, "mcp", res.chunks.iter().map(|c| c.id.clone()).collect(), res.best_similarity);

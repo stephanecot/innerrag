@@ -49,12 +49,15 @@ pub struct SearchRequest {
     /// Passages already sent in this session are not repeated in `context`.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Reuse a recent identical search (default true; evaluation turns it off to time searches).
+    #[serde(default)]
+    pub cache: Option<bool>,
 }
 
 /// Document filter appended to queries that bind the document as `d`.
 const DOC_FILTER: &str = "($drafts OR d.status = 'PUBLISHED') AND (size($tags) = 0 OR any(t IN $tags WHERE list_contains(d.tags, t)))";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChunkHit {
     pub id: String,
     pub doc_id: String,
@@ -93,14 +96,14 @@ pub struct EntityHit {
     pub via: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RelationHit {
     pub source: String,
     pub target: String,
     pub weight: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchResponse {
     pub query: String,
     pub chunks: Vec<ChunkHit>,
@@ -116,6 +119,8 @@ pub struct SearchResponse {
     pub best_similarity: Option<f64>,
     /// Passages dropped because a better-ranked one says nearly the same thing.
     pub near_duplicates: usize,
+    /// Served from the cache of recent searches (same question and settings, unchanged data).
+    pub cached: bool,
     pub millis: u128,
 }
 
@@ -129,7 +134,34 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
     let min_score = req.min_score.unwrap_or(state.config.min_score).clamp(0.0, 1.0);
     let use_graph = req.use_graph.unwrap_or(true);
     let drafts = lbug::Value::Bool(req.include_drafts.unwrap_or(false));
-    let tags = db::strings(normalize_tags(req.tags.as_deref().unwrap_or_default()));
+    let tag_list = normalize_tags(req.tags.as_deref().unwrap_or_default());
+    let version = graph.version();
+    let use_cache = req.cache.unwrap_or(true);
+    let cache_key = {
+        let mut sorted_tags = tag_list.clone();
+        sorted_tags.sort();
+        serde_json::json!([
+            version,
+            query.split_whitespace().collect::<Vec<_>>().join(" "),
+            k,
+            min_score,
+            use_graph,
+            req.use_keywords.unwrap_or(true),
+            req.rerank.unwrap_or(true),
+            req.include_drafts.unwrap_or(false),
+            sorted_tags,
+        ])
+        .to_string()
+    };
+    if use_cache {
+        if let Some(hit) = graph.cache.get(&cache_key) {
+            let mut res = (*hit).clone();
+            res.cached = true;
+            res.millis = started.elapsed().as_millis();
+            return Ok(res);
+        }
+    }
+    let tags = db::strings(tag_list);
     let qv = state.embedder.embed_query(&query)?;
     let conn = graph.reader()?;
 
@@ -329,10 +361,18 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
     // The cross-encoder re-reads the best candidates with the question and reorders them.
     if let Some(reranker) = state.reranker.as_ref().filter(|_| req.rerank.unwrap_or(true)) {
         chunks.truncate((k * 2).max(16));
-        let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-        let scores = reranker.score(&query, &texts)?;
-        for (c, s) in chunks.iter_mut().zip(scores) {
-            c.rerank_score = Some(s);
+        // Scores already computed for this question (another k, mode or budget) are reused.
+        let ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
+        let known = graph.cache.scores(version, &query, &ids);
+        let todo: Vec<usize> = (0..chunks.len()).filter(|i| !known.contains_key(&chunks[*i].id)).collect();
+        let texts: Vec<&str> = todo.iter().map(|i| chunks[*i].text.as_str()).collect();
+        let fresh = if texts.is_empty() { Vec::new() } else { reranker.score(&query, &texts)? };
+        graph.cache.put_scores(version, &query, todo.iter().zip(&fresh).map(|(i, s)| (chunks[*i].id.clone(), *s)));
+        for c in chunks.iter_mut() {
+            c.rerank_score = known.get(&c.id).copied();
+        }
+        for (i, s) in todo.iter().zip(fresh) {
+            chunks[*i].rerank_score = Some(s);
         }
         chunks.sort_by(|a, b| b.rerank_score.unwrap_or(0.0).total_cmp(&a.rerank_score.unwrap_or(0.0)));
     }
@@ -387,7 +427,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
             None => "The knowledge base has no published passage to search.\n".to_string(),
         };
     }
-    Ok(SearchResponse {
+    let response = SearchResponse {
         query,
         chunks,
         entities: entity_list,
@@ -397,8 +437,13 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         below_threshold,
         best_similarity,
         near_duplicates,
+        cached: false,
         millis: started.elapsed().as_millis(),
-    })
+    };
+    if use_cache {
+        graph.cache.put(cache_key, std::sync::Arc::new(response.clone()));
+    }
+    Ok(response)
 }
 
 fn build_context(chunks: &[ChunkHit], entities: &[EntityHit], relations: &[RelationHit]) -> String {

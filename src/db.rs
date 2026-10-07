@@ -21,13 +21,24 @@ pub struct Graph {
     dir: std::path::PathBuf,
     write_lock: Mutex<()>,
     dim: usize,
+    /// Bumped after every write: cached search results of an older version are stale.
+    version: std::sync::atomic::AtomicU64,
+    /// Recent search results and cross-encoder scores (see search.rs).
+    pub cache: crate::cache::SearchCache,
 }
 
 /// The single writer of a database: LadybugDB allows one write transaction at a time.
 pub struct Writer<'a> {
     // Declared first so the connection is dropped before the lock is released.
     conn: Connection<'a>,
+    version: &'a std::sync::atomic::AtomicU64,
     _guard: MutexGuard<'a, ()>,
+}
+
+impl Drop for Writer<'_> {
+    fn drop(&mut self) {
+        self.version.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl<'a> std::ops::Deref for Writer<'a> {
@@ -55,7 +66,15 @@ impl Graph {
         }
         drop(conn);
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let graph = Self { db, dir, keywords: Default::default(), write_lock: Mutex::new(()), dim };
+        let graph = Self {
+            db,
+            dir,
+            keywords: Default::default(),
+            write_lock: Mutex::new(()),
+            dim,
+            version: Default::default(),
+            cache: Default::default(),
+        };
         graph.init_schema()?;
         graph.repair()?;
         graph.checkpoint()?;
@@ -153,6 +172,7 @@ impl Graph {
 
     /// Replaces a document's passages in the keyword index.
     pub fn index_keywords(&self, doc_id: &str, passages: &[(String, String)]) {
+        self.version.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Ok(mut index) = self.keywords.write() {
             index.remove_document(doc_id);
             for (id, text) in passages {
@@ -172,7 +192,12 @@ impl Graph {
 
     pub fn writer(&self) -> Result<Writer<'_>> {
         let guard = self.write_lock.lock().map_err(|_| anyhow!("writer lock poisoned"))?;
-        Ok(Writer { conn: Connection::new(&self.db)?, _guard: guard })
+        Ok(Writer { conn: Connection::new(&self.db)?, version: &self.version, _guard: guard })
+    }
+
+    /// Changes after every write; part of the search cache keys.
+    pub fn version(&self) -> u64 {
+        self.version.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// A fresh connection for read queries, so reads do not wait behind ingestion.

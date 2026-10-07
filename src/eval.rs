@@ -163,6 +163,7 @@ fn run_once(state: &AppState, graph: &Graph, set: &EvalSet, req: &RunRequest, k:
                 mode: None,
                 budget: None,
                 session_id: None,
+                cache: Some(false),
             },
         )?;
         let rank = res.chunks.iter().position(|c| matches(c, &q.expect)).map(|i| i + 1);
