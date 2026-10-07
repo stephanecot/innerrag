@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DocumentSummary, type DocumentWithChunks, type FileInfo, type Job, type ServerConfig, type Status, type Stats } from "../api";
 import { href } from "../App";
 import { CloseIcon, DocTypeIcon, PlusIcon } from "../Icons";
-import { bytes, DOC_KIND, docKind, JOB_STAGE, jobPercent, longDate, num, plural, relativeDate, STATUS_LABEL } from "../util";
+import { translate, useT } from "../i18n";
+import { bytes, docKind, docKindInfo, jobPercent, jobStage, longDate, num, relativeDate, statusLabel } from "../util";
 
 const ACCEPT = ".pdf,.docx,.pptx,.doc,.ppt,.md,.markdown,.html,.htm,.txt";
 
@@ -12,6 +13,7 @@ export default function DocumentsView({
   project, config, params,
 }: { project: string; config: ServerConfig | null; params: URLSearchParams }) {
   const p = useMemo(() => api.project(project), [project]);
+  const t = useT();
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
@@ -89,28 +91,28 @@ export default function DocumentsView({
       <section className="page" aria-labelledby="docs-title">
         <div className="page-head">
           <div>
-            <h1 id="docs-title">Documents</h1>
-            <p>Seuls les documents publiés servent aux réponses. Les brouillons restent visibles sur la carte, en pointillés.</p>
+            <h1 id="docs-title">{t("docs.title")}</h1>
+            <p>{t("docs.intro")}</p>
           </div>
           <button type="button" className="btn btn-primary" onClick={() => setPanel({ kind: "new" })}>
             <PlusIcon />
-            Ajouter un document
+            {t("common.addDocument")}
           </button>
         </div>
 
         <div className="toolbar">
-          <label htmlFor="doc-filter" className="sr-only">Filtrer par titre</label>
+          <label htmlFor="doc-filter" className="sr-only">{t("docs.filter")}</label>
           <input
             id="doc-filter"
             className="input"
             type="search"
-            placeholder="Filtrer par titre"
+            placeholder={t("docs.filter")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             style={{ flex: "1 1 220px", maxWidth: 320 }}
           />
-          <div className="segmented" role="group" aria-label="Statut">
-            {([["", "Tous", stats?.documents], ["PUBLISHED", "Publiés", stats?.published], ["DRAFT", "Brouillons", stats?.drafts]] as const).map(
+          <div className="segmented" role="group" aria-label={t("docs.status")}>
+            {([["", t("docs.all"), stats?.documents], ["PUBLISHED", t("docs.published"), stats?.published], ["DRAFT", t("docs.drafts"), stats?.drafts]] as const).map(
               ([value, label, count]) => (
                 <button key={value} type="button" aria-pressed={status === value} onClick={() => setStatus(value)}>
                   {label} {count ?? ""}
@@ -120,10 +122,10 @@ export default function DocumentsView({
           </div>
           {tags.length > 0 && (
             <label className="field-box">
-              Tag
+              {t("docs.tag")}
               <select value={tag} onChange={(e) => setTag(e.target.value)}>
-                <option value="">Tous</option>
-                {tags.map((t) => <option key={t.tag} value={t.tag}>{t.tag} ({t.count})</option>)}
+                <option value="">{t("docs.all")}</option>
+                {tags.map((tg) => <option key={tg.tag} value={tg.tag}>{tg.tag} ({tg.count})</option>)}
               </select>
             </label>
           )}
@@ -132,7 +134,7 @@ export default function DocumentsView({
         {error && <div className="error-banner" role="alert">{error}</div>}
 
         {recent.length > 0 && (
-          <section className="panel jobs" aria-label="Ingestions en cours et récentes">
+          <section className="panel jobs" aria-label={t("docs.jobsAria")}>
             {recent.slice(0, 6).map((j) => (
               <JobRow
                 key={j.id}
@@ -146,9 +148,9 @@ export default function DocumentsView({
 
         {docs.length === 0 && pending.length === 0 && !error ? (
           <div className="panel empty">
-            <p>{q || status || tag ? "Aucun document ne correspond à ces filtres." : "Ce projet ne contient encore aucun document."}</p>
+            <p>{q || status || tag ? t("docs.noMatch") : t("docs.empty")}</p>
             {!(q || status || tag) && (
-              <button type="button" className="btn btn-primary" onClick={() => setPanel({ kind: "new" })}>Ajouter un document</button>
+              <button type="button" className="btn btn-primary" onClick={() => setPanel({ kind: "new" })}>{t("common.addDocument")}</button>
             )}
           </div>
         ) : (
@@ -156,13 +158,13 @@ export default function DocumentsView({
             <table style={{ minWidth: 760 }}>
               <thead>
                 <tr>
-                  <th scope="col">Titre</th>
-                  <th scope="col">Statut</th>
-                  <th scope="col">Tags</th>
-                  <th scope="col">Créé par</th>
-                  <th scope="col" className="num">Passages</th>
-                  <th scope="col" className="num">Entités</th>
-                  <th scope="col">Modifié</th>
+                  <th scope="col">{t("docs.colTitle")}</th>
+                  <th scope="col">{t("docs.colStatus")}</th>
+                  <th scope="col">{t("docs.colTags")}</th>
+                  <th scope="col">{t("docs.colCreator")}</th>
+                  <th scope="col" className="num">{t("docs.colPassages")}</th>
+                  <th scope="col" className="num">{t("docs.colEntities")}</th>
+                  <th scope="col">{t("docs.colUpdated")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -170,13 +172,13 @@ export default function DocumentsView({
                   <tr key={j.id} className="pending-row">
                     <td>
                       <span className="title-with-type">
-                        <DocTypeIcon kind={docKind(j.filename)} {...DOC_KIND[docKind(j.filename)]} />
+                        <DocTypeIcon kind={docKind(j.filename)} {...docKindInfo(docKind(j.filename))} />
                         <strong className="cell-title" title={j.filename}>{j.filename}</strong>
                       </span>
                     </td>
-                    <td><span className="status status-INDEXING">Indexation {jobPercent(j)} %</span></td>
+                    <td><span className="status status-INDEXING">{t("docs.indexing", { pct: t("common.percent", { n: jobPercent(j) }) })}</span></td>
                     <td colSpan={4} className="muted">
-                      {JOB_STAGE[j.stage]}{j.total ? ` : ${num(j.done)} / ${num(j.total)} passages` : ""}
+                      {jobStage(j.stage)}{j.total ? t("docs.progressPassages", { done: j.done, total: j.total }) : ""}
                     </td>
                     <td>
                       <button
@@ -187,7 +189,7 @@ export default function DocumentsView({
                           loadJobs();
                         }}
                       >
-                        Annuler
+                        {t("common.cancel")}
                       </button>
                     </td>
                   </tr>
@@ -200,14 +202,14 @@ export default function DocumentsView({
                   >
                     <td>
                       <span className="title-with-type">
-                        <DocTypeIcon kind={docKind(d.source)} {...DOC_KIND[docKind(d.source)]} />
+                        <DocTypeIcon kind={docKind(d.source)} {...docKindInfo(docKind(d.source))} />
                         <button type="button" className="row-title cell-title" title={d.title} onClick={() => setPanel({ kind: "doc", id: d.id })}>{d.title}</button>
                       </span>
                     </td>
-                    <td><span className={`status status-${d.status}`}>{STATUS_LABEL[d.status]}</span></td>
+                    <td><span className={`status status-${d.status}`}>{statusLabel(d.status)}</span></td>
                     <td>
                       <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {d.tags.map((t) => <span key={t} className="chip">{t}</span>)}
+                        {d.tags.map((tg) => <span key={tg} className="chip">{tg}</span>)}
                       </span>
                     </td>
                     <td>{d.creator}</td>
@@ -255,23 +257,24 @@ export default function DocumentsView({
 
 function TagsInput({ id, value, onChange }: { id: string; value: string[]; onChange: (tags: string[]) => void }) {
   const [draft, setDraft] = useState("");
+  const t = useT();
   const add = (raw: string) => {
-    const t = raw.trim().replace(/,$/, "").trim();
-    if (t && !value.some((v) => v.toLowerCase() === t.toLowerCase())) onChange([...value, t]);
+    const tag = raw.trim().replace(/,$/, "").trim();
+    if (tag && !value.some((v) => v.toLowerCase() === tag.toLowerCase())) onChange([...value, tag]);
     setDraft("");
   };
   return (
     <div className="tags-input">
-      {value.map((t) => (
-        <span key={t} className="chip">
-          {t}
-          <button type="button" aria-label={`Retirer le tag ${t}`} onClick={() => onChange(value.filter((v) => v !== t))}>×</button>
+      {value.map((tag) => (
+        <span key={tag} className="chip">
+          {tag}
+          <button type="button" aria-label={t("docs.removeTag", { tag })} onClick={() => onChange(value.filter((v) => v !== tag))}>×</button>
         </span>
       ))}
       <input
         id={id}
         type="text"
-        placeholder="Ajouter un tag"
+        placeholder={t("docs.addTag")}
         value={draft}
         onChange={(e) => (e.target.value.endsWith(",") ? add(e.target.value) : setDraft(e.target.value))}
         onKeyDown={(e) => {
@@ -289,14 +292,15 @@ function TagsInput({ id, value, onChange }: { id: string; value: string[]; onCha
 }
 
 function StatusChoice({ value, onChange }: { value: Status; onChange: (s: Status) => void }) {
+  const t = useT();
   return (
     <fieldset style={{ margin: 0, padding: 0, border: 0 }} className="field">
-      <legend className="label" style={{ paddingBottom: 6 }}>Statut</legend>
+      <legend className="label" style={{ paddingBottom: 6 }}>{t("docs.status")}</legend>
       <div className="status-choice">
         {(["DRAFT", "PUBLISHED"] as const).map((s) => (
           <label key={s} className={value === s ? "on" : ""}>
             <input type="radio" name="status" checked={value === s} onChange={() => onChange(s)} />
-            {STATUS_LABEL[s]}
+            {statusLabel(s)}
           </label>
         ))}
       </div>
@@ -307,6 +311,7 @@ function StatusChoice({ value, onChange }: { value: Status; onChange: (s: Status
 function JobRow({ job, onOpen, onDismiss }: { job: Job; onOpen: () => void; onDismiss: () => void }) {
   const pct = jobPercent(job);
   const running = !job.finished_at;
+  const t = useT();
   return (
     <div className={`job-row${job.stage === "failed" ? " failed" : ""}`}>
       <div className="job-main">
@@ -314,24 +319,26 @@ function JobRow({ job, onOpen, onDismiss }: { job: Job; onOpen: () => void; onDi
           <strong>{job.filename}</strong>
           <span className="muted">
             {job.stage === "done" && job.report
-              ? `${plural(job.report.chunks, "passage", "passages")}, ${plural(job.report.entities, "entité", "entités")} en ${Math.round(job.report.millis / 1000)} s`
-              : job.stage === "failed"
-                ? "Échec"
-                : job.stage === "cancelled"
-                ? "Annulée"
-                : `${JOB_STAGE[job.stage]}${job.total ? ` ${num(job.done)} / ${num(job.total)}` : ""}`}
+              ? t("docs.report", {
+                passages: t("common.passages", { n: job.report.chunks }),
+                entities: t("common.entities", { n: job.report.entities }),
+                s: Math.round(job.report.millis / 1000),
+              })
+              : job.stage === "failed" || job.stage === "cancelled"
+                ? jobStage(job.stage)
+                : `${jobStage(job.stage)}${job.total ? ` ${num(job.done)} / ${num(job.total)}` : ""}`}
           </span>
         </div>
         {running && (
-          <div className="meter-track job-track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Ingestion de ${job.filename}`}>
+          <div className="meter-track job-track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={t("docs.ingestionOf", { file: job.filename })}>
             <span className="meter-fill" style={{ display: "block", width: `${pct}%`, background: "var(--c-organization)" }} />
           </div>
         )}
         {job.error && <span className="danger-text" style={{ fontSize: 14 }}>{job.error}</span>}
       </div>
-      {job.stage === "done" && <button type="button" className="btn" onClick={onOpen}>Ouvrir</button>}
+      {job.stage === "done" && <button type="button" className="btn" onClick={onOpen}>{t("common.open")}</button>}
       {!running && (
-        <button type="button" className="icon-button" aria-label="Masquer cette ligne" onClick={onDismiss}><CloseIcon /></button>
+        <button type="button" className="icon-button" aria-label={t("docs.hideRow")} onClick={onDismiss}><CloseIcon /></button>
       )}
     </div>
   );
@@ -340,11 +347,12 @@ function JobRow({ job, onOpen, onDismiss }: { job: Job; onOpen: () => void; onDi
 /** Drop zone + file picker for every supported format. */
 function FileDrop({ file, onFile, maxMb }: { file: File | null; onFile: (f: File | null) => void; maxMb: number }) {
   const [over, setOver] = useState(false);
+  const t = useT();
   if (file) {
     return (
       <div className="file-chosen">
         <span><strong>{file.name}</strong> <span className="muted">{bytes(file.size)}</span></span>
-        <button type="button" className="btn" onClick={() => onFile(null)}>Changer</button>
+        <button type="button" className="btn" onClick={() => onFile(null)}>{t("docs.change")}</button>
       </div>
     );
   }
@@ -363,8 +371,8 @@ function FileDrop({ file, onFile, maxMb }: { file: File | null; onFile: (f: File
         if (f) onFile(f);
       }}
     >
-      <strong>Déposez un fichier ici, ou cliquez pour le choisir</strong>
-      <span className="muted">PDF, Word, PowerPoint, Markdown ou texte, {maxMb} Mo au plus</span>
+      <strong>{t("docs.drop")}</strong>
+      <span className="muted">{t("docs.formats", { mb: maxMb })}</span>
       <input
         type="file"
         accept={ACCEPT}
@@ -393,6 +401,7 @@ function NewDocument({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const maxMb = config?.max_upload_mb ?? 200;
+  const t = useT();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -416,53 +425,53 @@ function NewDocument({
   return (
     <aside className="side" aria-labelledby="new-title">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 id="new-title" style={{ fontSize: 28 }}>Nouveau document</h2>
-        <button type="button" className="btn" onClick={onClose}>Annuler</button>
+        <h2 id="new-title" style={{ fontSize: 28 }}>{t("docs.new")}</h2>
+        <button type="button" className="btn" onClick={onClose}>{t("common.cancel")}</button>
       </div>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {pasting ? (
           <div className="field">
-            <label htmlFor="new-doc-text">Texte</label>
+            <label htmlFor="new-doc-text">{t("docs.text")}</label>
             <textarea id="new-doc-text" className="textarea" rows={10} required value={text} onChange={(e) => setText(e.target.value)} />
-            <span className="hint">Le Markdown est compris : titres, et front-matter title, tags, status.</span>
-            <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(false)}>Importer un fichier plutôt</button>
+            <span className="hint">{t("docs.mdHint")}</span>
+            <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(false)}>{t("docs.importInstead")}</button>
           </div>
         ) : (
           <div className="field">
-            <span className="label">Fichier</span>
+            <span className="label">{t("docs.file")}</span>
             <FileDrop file={file} onFile={setFile} maxMb={maxMb} />
-            {file && file.size > maxMb * 1024 * 1024 && <span className="danger-text hint">Ce fichier dépasse {maxMb} Mo.</span>}
-            {!file && <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(true)}>Coller du texte plutôt</button>}
+            {file && file.size > maxMb * 1024 * 1024 && <span className="danger-text hint">{t("docs.tooBig", { mb: maxMb })}</span>}
+            {!file && <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setPasting(true)}>{t("docs.pasteInstead")}</button>}
           </div>
         )}
         <div className="field">
-          <label htmlFor="new-doc-title">Titre</label>
-          <input id="new-doc-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Repris du document si vide" />
+          <label htmlFor="new-doc-title">{t("docs.titleLabel")}</label>
+          <input id="new-doc-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("docs.titlePh")} />
         </div>
         <StatusChoice value={status} onChange={setStatus} />
         <div className="field">
-          <label htmlFor="new-doc-tags">Tags</label>
+          <label htmlFor="new-doc-tags">{t("docs.tags")}</label>
           <TagsInput id="new-doc-tags" value={tags} onChange={setTags} />
         </div>
         <details>
-          <summary style={{ minHeight: 40, cursor: "pointer" }}>Identifiant et source</summary>
+          <summary style={{ minHeight: 40, cursor: "pointer" }}>{t("docs.idSource")}</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 }}>
             <div className="field">
-              <label htmlFor="new-doc-id">Identifiant</label>
-              <input id="new-doc-id" className="input" value={id} onChange={(e) => setId(e.target.value)} placeholder="généré si vide" />
-              <span className="hint">Un identifiant stable permet de remplacer le document plus tard.</span>
+              <label htmlFor="new-doc-id">{t("docs.id")}</label>
+              <input id="new-doc-id" className="input" value={id} onChange={(e) => setId(e.target.value)} placeholder={t("docs.idPh")} />
+              <span className="hint">{t("docs.idHint")}</span>
             </div>
             <div className="field">
-              <label htmlFor="new-doc-source">Source</label>
-              <input id="new-doc-source" className="input" value={source} onChange={(e) => setSource(e.target.value)} placeholder="nom du fichier si vide" />
+              <label htmlFor="new-doc-source">{t("docs.source")}</label>
+              <input id="new-doc-source" className="input" value={source} onChange={(e) => setSource(e.target.value)} placeholder={t("docs.sourcePh")} />
             </div>
           </div>
         </details>
         {error && <div className="error-banner" role="alert">{error}</div>}
         <button type="submit" className="btn btn-primary" disabled={busy || !ready}>
-          {busy ? "Envoi…" : "Ajouter au projet"}
+          {busy ? t("docs.sending") : t("docs.addToProject")}
         </button>
-        <p className="hint muted">L'indexation se poursuit en arrière-plan : vous pouvez fermer ce panneau et suivre sa progression en haut de la liste.</p>
+        <p className="hint muted">{t("docs.bgHint")}</p>
       </form>
     </aside>
   );
@@ -480,6 +489,7 @@ function DocumentPanel({
   onClose: () => void;
 }) {
   const p = useMemo(() => api.project(project), [project]);
+  const t = useT();
   const [doc, setDoc] = useState<DocumentWithChunks | null>(null);
   const [title, setTitle] = useState("");
   const [status, setStatus] = useState<Status>("PUBLISHED");
@@ -522,15 +532,15 @@ function DocumentPanel({
 
   if (!doc) {
     return (
-      <aside className="side" aria-label="Document">
+      <aside className="side" aria-label={t("docs.docAria")}>
         {job ? (
-          <p className="muted">Ce document est en cours d'indexation ({JOB_STAGE[job.stage].toLowerCase()}, {jobPercent(job)} %).</p>
+          <p className="muted">{t("docs.indexingNow", { stage: jobStage(job.stage).toLowerCase(), pct: t("common.percent", { n: jobPercent(job) }) })}</p>
         ) : error ? (
           <div className="error-banner" role="alert">{error}</div>
         ) : (
-          <p className="muted">Chargement…</p>
+          <p className="muted">{t("common.loading")}</p>
         )}
-        <button type="button" className="btn" onClick={onClose}>Fermer</button>
+        <button type="button" className="btn" onClick={onClose}>{t("common.close")}</button>
       </aside>
     );
   }
@@ -543,20 +553,25 @@ function DocumentPanel({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <h2 id="doc-title" className="side-title title-with-type" style={{ fontSize: 26 }} title={doc.title}>
-            <DocTypeIcon kind={docKind(doc.source)} {...DOC_KIND[docKind(doc.source)]} />
+            <DocTypeIcon kind={docKind(doc.source)} {...docKindInfo(docKind(doc.source))} />
             <span>{doc.title}</span>
           </h2>
           <p className="muted wrap-anywhere" style={{ fontSize: 14 }}>
-            Identifiant {doc.id}, créé par {doc.creator} le {longDate(doc.created_at)}
+            {t("docs.meta", { id: doc.id, creator: doc.creator, date: longDate(doc.created_at) })}
           </p>
           {file && (
             <p className="muted" style={{ fontSize: 14 }}>
-              Importé de {file.name} ({file.format_label}{file.pages ? `, ${plural(file.pages, file.format === "pptx" || file.format === "ppt" ? "diapositive" : "page", file.format === "pptx" || file.format === "ppt" ? "diapositives" : "pages")}` : ""}, {bytes(file.size)})
+              {t("docs.imported", {
+                name: file.name,
+                format: file.format_label,
+                pages: file.pages ? `, ${t(file.format === "pptx" || file.format === "ppt" ? "docs.slides" : "common.pages", { n: file.pages })}` : "",
+                size: bytes(file.size),
+              })}
             </p>
           )}
-          {job && <p style={{ fontSize: 14 }}>Réindexation en cours : {JOB_STAGE[job.stage].toLowerCase()}, {jobPercent(job)} %</p>}
+          {job && <p style={{ fontSize: 14 }}>{t("docs.reindexing", { stage: jobStage(job.stage).toLowerCase(), pct: t("common.percent", { n: jobPercent(job) }) })}</p>}
         </div>
-        <button type="button" className="btn" onClick={onClose}>Fermer</button>
+        <button type="button" className="btn" onClick={onClose}>{t("common.close")}</button>
       </div>
 
       {mode === "replace" ? (
@@ -572,26 +587,26 @@ function DocumentPanel({
               setMode("edit");
               setNewText("");
               setNewFile(null);
-              setMessage("Remplacement lancé : la réindexation se poursuit en arrière-plan.");
+              setMessage(translate("docs.replaceStarted"));
             });
           }}
         >
           <div className="field">
-            <span className="label">Nouveau fichier</span>
+            <span className="label">{t("docs.newFile")}</span>
             <FileDrop file={newFile} onFile={setNewFile} maxMb={200} />
           </div>
           {!newFile && (
             <div className="field">
-              <label htmlFor="replace-text">Ou nouveau texte</label>
+              <label htmlFor="replace-text">{t("docs.orNewText")}</label>
               <textarea id="replace-text" className="textarea" rows={8} value={newText} onChange={(e) => setNewText(e.target.value)} />
             </div>
           )}
-          <span className="hint">L'ancien contenu, ses passages et ses liens sont retirés du graphe. Créateur et date de création sont conservés.</span>
+          <span className="hint">{t("docs.replaceHint")}</span>
           <div className="toolbar">
             <button type="submit" className="btn btn-primary" disabled={busy || (!newFile && !newText.trim())}>
-              {busy ? "Envoi…" : "Remplacer et réindexer"}
+              {busy ? t("docs.sending") : t("docs.replaceReindex")}
             </button>
-            <button type="button" className="btn" onClick={() => setMode("edit")}>Annuler</button>
+            <button type="button" className="btn" onClick={() => setMode("edit")}>{t("common.cancel")}</button>
           </div>
         </form>
       ) : (
@@ -601,27 +616,27 @@ function DocumentPanel({
             e.preventDefault();
             run(async () => {
               fill(await p.patchDocument(doc.id, { title, status, tags, source }));
-              setMessage("Modifications enregistrées.");
+              setMessage(translate("docs.saved"));
               onChanged();
             });
           }}
         >
           <div className="field">
-            <label htmlFor="doc-edit-title">Titre</label>
+            <label htmlFor="doc-edit-title">{t("docs.titleLabel")}</label>
             <input id="doc-edit-title" className="input" required value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
           <StatusChoice value={status} onChange={setStatus} />
           <div className="field">
-            <label htmlFor="doc-edit-tags">Tags</label>
+            <label htmlFor="doc-edit-tags">{t("docs.tags")}</label>
             <TagsInput id="doc-edit-tags" value={tags} onChange={setTags} />
           </div>
           <div className="field">
-            <label htmlFor="doc-edit-source">Source</label>
+            <label htmlFor="doc-edit-source">{t("docs.source")}</label>
             <input id="doc-edit-source" className="input" value={source} onChange={(e) => setSource(e.target.value)} />
           </div>
           {mode === "confirm-delete" ? (
             <div className="error-banner" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <span>Supprimer « {doc.title} » retire ses {plural(doc.passages.length, "passage", "passages")} et les entités qu'il est seul à citer.</span>
+              <span>{t("docs.deleteWarn", { title: doc.title, passages: t("common.passages", { n: doc.passages.length }) })}</span>
               <div className="toolbar">
                 <button
                   type="button"
@@ -632,16 +647,16 @@ function DocumentPanel({
                     onDeleted();
                   })}
                 >
-                  Supprimer définitivement
+                  {t("docs.deleteForever")}
                 </button>
-                <button type="button" className="btn" onClick={() => setMode("edit")}>Annuler</button>
+                <button type="button" className="btn" onClick={() => setMode("edit")}>{t("common.cancel")}</button>
               </div>
             </div>
           ) : (
             <div className="toolbar">
-              <button type="submit" className="btn btn-primary" disabled={busy || !dirty}>Enregistrer</button>
-              <button type="button" className="btn" onClick={() => setMode("replace")}>Remplacer le texte</button>
-              <button type="button" className="btn btn-danger" onClick={() => setMode("confirm-delete")}>Supprimer</button>
+              <button type="submit" className="btn btn-primary" disabled={busy || !dirty}>{t("common.save")}</button>
+              <button type="button" className="btn" onClick={() => setMode("replace")}>{t("docs.replaceText")}</button>
+              <button type="button" className="btn btn-danger" onClick={() => setMode("confirm-delete")}>{t("common.delete")}</button>
             </div>
           )}
         </form>
@@ -651,30 +666,31 @@ function DocumentPanel({
       {error && <div className="error-banner" role="alert">{error}</div>}
 
       <section style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--rule-soft)", paddingTop: 18 }}>
-        <h3>Lire</h3>
+        <h3>{t("docs.read")}</h3>
         <div className="toolbar">
-          <a className="btn btn-primary" href={href("lire", { doc: doc.id })}>Lire le document</a>
+          <a className="btn btn-primary" href={href("lire", { doc: doc.id })}>{t("docs.readDoc")}</a>
           {file?.stored && (
-            <a className="btn" href={p.fileUrl(doc.id)} target="_blank" rel="noopener">Ouvrir l'original ({file.format_label})</a>
+            <a className="btn" href={p.fileUrl(doc.id)} target="_blank" rel="noopener">{t("docs.openOriginal", { format: file.format_label })}</a>
           )}
         </div>
       </section>
 
       <section style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--rule-soft)", paddingTop: 18 }}>
-        <h3>Comment ce document est indexé</h3>
+        <h3>{t("docs.howIndexed")}</h3>
         <p className="muted" style={{ fontSize: 14 }}>
-          Pour la recherche, le document est découpé en {plural(doc.passage_count, "passage", "passages")} d'environ
-          1 000 caractères, dans lesquels {plural(doc.entities, "entité a été repérée", "entités ont été repérées")}.
-          Ce sont ces passages que la recherche retrouve et que les agents reçoivent, jamais le document entier.
+          {t("docs.howText", {
+            passages: t("common.passages", { n: doc.passage_count }),
+            entities: t("docs.entitiesFound", { n: doc.entities }),
+          })}
         </p>
         <a className="btn" style={{ alignSelf: "flex-start" }} href={href("lire", { doc: doc.id, tab: "passages" })}>
-          Voir le découpage complet
+          {t("docs.seeSplit")}
         </a>
         {doc.passages.slice(0, 1).map((c) => (
           <article key={c.id} className="passage">
             <div className="passage-head">
-              <strong>Exemple : le passage {c.idx + 1}</strong>
-              {c.page && <a href={href("lire", { doc: doc.id, page: String(c.page) })}>page {c.page}</a>}
+              <strong>{t("docs.example", { n: String(c.idx + 1) })}</strong>
+              {c.page && <a href={href("lire", { doc: doc.id, page: String(c.page) })}>{t("common.page", { n: String(c.page) })}</a>}
             </div>
             <p className="clamp">{c.text}</p>
           </article>

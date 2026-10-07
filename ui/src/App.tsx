@@ -3,7 +3,8 @@ import { api, type Job, type Project, type ServerConfig } from "./api";
 import {
   ChatIcon, CheckIcon, CodeIcon, GapIcon, PlugIcon, ChevronIcon, ConsoleIcon, DocIcon, FolderIcon, HistoryIcon, Logo, MapIcon, MoonIcon, SearchIcon, SunIcon,
 } from "./Icons";
-import { JOB_STAGE, jobPercent } from "./util";
+import { useLang, useT, type Key, type Lang } from "./i18n";
+import { jobPercent, jobStage } from "./util";
 import MapView from "./views/MapView";
 import DocumentsView from "./views/DocumentsView";
 import SearchView from "./views/SearchView";
@@ -60,17 +61,17 @@ function store(key: string, value: string) {
   }
 }
 
-const NAV: { route: Route; label: string; icon: () => ReactElement }[] = [
-  { route: "carte", label: "Carte", icon: MapIcon },
-  { route: "documents", label: "Documents", icon: DocIcon },
-  { route: "recherche", label: "Recherche", icon: () => <SearchIcon /> },
-  { route: "assistant", label: "Assistant", icon: ChatIcon },
-  { route: "evaluation", label: "Évaluation", icon: CheckIcon },
-  { route: "lacunes", label: "Lacunes", icon: GapIcon },
-  { route: "code", label: "Doc et code", icon: CodeIcon },
-  { route: "historique", label: "Historique", icon: HistoryIcon },
-  { route: "cypher", label: "Console Cypher", icon: ConsoleIcon },
-  { route: "mcp", label: "MCP", icon: PlugIcon },
+const NAV: { route: Route; label: Key; icon: () => ReactElement }[] = [
+  { route: "carte", label: "nav.map", icon: MapIcon },
+  { route: "documents", label: "nav.documents", icon: DocIcon },
+  { route: "recherche", label: "nav.search", icon: () => <SearchIcon /> },
+  { route: "assistant", label: "nav.assistant", icon: ChatIcon },
+  { route: "evaluation", label: "nav.evaluation", icon: CheckIcon },
+  { route: "lacunes", label: "nav.gaps", icon: GapIcon },
+  { route: "code", label: "nav.code", icon: CodeIcon },
+  { route: "historique", label: "nav.history", icon: HistoryIcon },
+  { route: "cypher", label: "nav.cypher", icon: ConsoleIcon },
+  { route: "mcp", label: "nav.mcp", icon: PlugIcon },
 ];
 
 export default function App() {
@@ -80,6 +81,8 @@ export default function App() {
   const [project, setProjectState] = useState<string>(() => stored(PROJECT_STORAGE));
   const [loadError, setLoadError] = useState("");
   const [theme, setTheme] = useState<string>(() => stored(THEME_STORAGE));
+  const [lang, setLang] = useLang();
+  const t = useT();
 
   useEffect(() => {
     const onHash = () => setLocation(readLocation());
@@ -136,8 +139,8 @@ export default function App() {
       return (
         <div className="page">
           <div className="empty">
-            <p>{loadError ? `Le serveur ne répond pas : ${loadError}` : "Aucun projet pour l'instant."}</p>
-            <a className="btn btn-primary" href={href("projets")}>Créer un projet</a>
+            <p>{loadError ? t("app.serverDown", { error: loadError }) : t("app.noProject")}</p>
+            <a className="btn btn-primary" href={href("projets")}>{t("app.createProject")}</a>
           </div>
         </div>
       );
@@ -165,18 +168,18 @@ export default function App() {
       default:
         return <MapView key={key} project={project} params={location.params} />;
     }
-  }, [location, project, projects, config, loadError, refreshProjects, setProject]);
+  }, [location, project, projects, config, loadError, refreshProjects, setProject, t]);
 
   return (
     <div className="app">
-      <nav className="rail" aria-label="Navigation principale">
+      <nav className="rail" aria-label={t("nav.main")}>
         <div className="brand"><Logo />innerrag</div>
         <ProjectSwitcher projects={projects} current={current} onPick={setProject} />
         <div className="nav">
           {NAV.map(({ route, label, icon: Icon }) => (
             <a key={route} href={href(route)} aria-current={location.route === route || (route === "documents" && location.route === "lire") ? "page" : undefined}>
               <Icon />
-              {label}
+              {t(label)}
             </a>
           ))}
         </div>
@@ -184,22 +187,25 @@ export default function App() {
           <div className="nav">
             <a href={href("projets")} aria-current={location.route === "projets" ? "page" : undefined}>
               <FolderIcon />
-              Gérer les projets
+              {t("nav.projects")}
             </a>
           </div>
           <div className="rail-user">
             <span>
-              {config ? `Connecté en tant que ${config.user}` : ""}
-              {config && <><br />Calcul : {config.models.device === "cuda" ? "GPU NVIDIA" : "CPU"}</>}
+              {config ? t("app.signedInAs", { user: config.user }) : ""}
+              {config && <><br />{t("app.compute", { device: t(config.models.device === "cuda" ? "app.gpu" : "app.cpu") })}</>}
             </span>
-            <button
-              type="button"
-              className="rail-icon-button"
-              onClick={toggleTheme}
-              aria-label={isDark ? "Passer au thème clair" : "Passer au thème sombre"}
-            >
-              {isDark ? <SunIcon /> : <MoonIcon />}
-            </button>
+            <div className="rail-controls">
+              <LangSwitch lang={lang} onChange={setLang} label={t("app.language")} />
+              <button
+                type="button"
+                className="rail-icon-button"
+                onClick={toggleTheme}
+                aria-label={isDark ? t("app.themeLight") : t("app.themeDark")}
+              >
+                {isDark ? <SunIcon /> : <MoonIcon />}
+              </button>
+            </div>
           </div>
         </div>
       </nav>
@@ -218,6 +224,7 @@ export default function App() {
 function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [folded, setFolded] = useState(false);
+  const t = useT();
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -243,26 +250,26 @@ function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
   }, []);
   if (!jobs.length) return null;
   return (
-    <section className={`jobs-float${folded ? " folded" : ""}`} aria-label="Ingestions en cours" aria-live="polite">
+    <section className={`jobs-float${folded ? " folded" : ""}`} aria-label={t("jobs.aria")} aria-live="polite">
       <div className="jobs-float-head">
         <span className="jobs-float-spinner" aria-hidden="true" />
-        <span className="jobs-float-title">{jobs.length > 1 ? `${jobs.length} ingestions en cours` : "Ingestion en cours"}</span>
+        <span className="jobs-float-title">{jobs.length > 1 ? t("jobs.many", { n: jobs.length }) : t("jobs.one")}</span>
         <button type="button" className="jobs-float-fold" onClick={() => setFolded(!folded)} aria-expanded={!folded}>
-          {folded ? `${jobPercent(jobs[0])} %` : "Réduire"}
+          {folded ? t("common.percent", { n: jobPercent(jobs[0]) }) : t("jobs.fold")}
         </button>
       </div>
       {!folded && jobs.slice(0, 3).map((j) => (
         <div key={j.id} className="jobs-float-job">
           <button type="button" className="jobs-float-open" onClick={() => onOpen(j)}>
             <span className="jobs-float-name">{j.filename}</span>
-            <span className="jobs-float-meta">{j.project}, {JOB_STAGE[j.stage].toLowerCase()} {j.stage === "queued" ? "" : `${jobPercent(j)} %`}</span>
+            <span className="jobs-float-meta">{j.project}, {jobStage(j.stage).toLowerCase()} {j.stage === "queued" ? "" : t("common.percent", { n: jobPercent(j) })}</span>
             <span className="jobs-float-track"><span style={{ width: `${jobPercent(j)}%` }} /></span>
           </button>
           <button
             type="button"
             className="jobs-float-cancel"
-            aria-label={`Annuler l'ingestion de ${j.filename}`}
-            title="Annuler cette ingestion"
+            aria-label={t("jobs.cancelAria", { file: j.filename })}
+            title={t("jobs.cancelTitle")}
             onClick={async () => {
               await api.cancelJob(j.id).catch(() => undefined);
               window.dispatchEvent(new Event("innerrag:job-queued"));
@@ -272,7 +279,7 @@ function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
           </button>
         </div>
       ))}
-      {!folded && jobs.length > 3 && <span className="jobs-float-more">et {jobs.length - 3} autres en attente</span>}
+      {!folded && jobs.length > 3 && <span className="jobs-float-more">{t("jobs.more", { n: jobs.length - 3 })}</span>}
     </section>
   );
 }
@@ -282,6 +289,7 @@ function ProjectSwitcher({
 }: { projects: Project[]; current?: Project; onPick: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (!open) return;
@@ -299,7 +307,7 @@ function ProjectSwitcher({
 
   return (
     <div className="project-switch" ref={ref}>
-      <span className="rail-label" id="project-label">Projet</span>
+      <span className="rail-label" id="project-label">{t("project.label")}</span>
       <button
         type="button"
         className="project-button"
@@ -308,7 +316,7 @@ function ProjectSwitcher({
         aria-labelledby="project-label"
         onClick={() => setOpen((o) => !o)}
       >
-        <span>{current?.id ?? "Aucun projet"}</span>
+        <span>{current?.id ?? t("project.none")}</span>
         <ChevronIcon />
       </button>
       {open && (
@@ -330,11 +338,26 @@ function ProjectSwitcher({
           ))}
           <li>
             <button type="button" onClick={() => { setOpen(false); go("projets"); }}>
-              <strong>Gérer les projets</strong>
+              <strong>{t("nav.projects")}</strong>
             </button>
           </li>
         </ul>
       )}
+    </div>
+  );
+}
+
+/** "FR | EN": the interface language, each name written in its own language. */
+function LangSwitch({ lang, onChange, label }: { lang: Lang; onChange: (lang: Lang) => void; label: string }) {
+  const options: [Lang, string, string][] = [["fr", "FR", "Français"], ["en", "EN", "English"]];
+  return (
+    <div className="lang-switch" role="group" aria-label={label}>
+      {options.map(([value, short, name]) => (
+        <button key={value} type="button" lang={value} aria-pressed={lang === value} title={name} onClick={() => onChange(value)}>
+          <span aria-hidden="true">{short}</span>
+          <span className="sr-only">{name}</span>
+        </button>
+      ))}
     </div>
   );
 }

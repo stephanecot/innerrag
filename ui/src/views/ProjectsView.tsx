@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type Project } from "../api";
 import { go } from "../App";
+import { locale, translate, useT } from "../i18n";
 import { bytes, longDate } from "../util";
 
 export default function ProjectsView({
@@ -15,6 +16,8 @@ export default function ProjectsView({
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const t = useT();
+  const repo = t("common.exampleRepo");
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -36,8 +39,8 @@ export default function ProjectsView({
       <section aria-labelledby="projects-title" style={{ flex: "999 1 480px", minWidth: 0, display: "flex", flexDirection: "column", gap: 18 }}>
         <div className="page-head">
           <div>
-            <h1 id="projects-title">Projets</h1>
-            <p>Chaque projet a sa propre base. Ses documents, entités et recherches ne voient jamais ceux des autres.</p>
+            <h1 id="projects-title">{t("projects.title")}</h1>
+            <p>{t("projects.intro")}</p>
           </div>
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
@@ -50,10 +53,10 @@ export default function ProjectsView({
                 <div className="project-name">
                   <strong>{p.title}</strong>
                   <span className="danger-text" style={{ fontSize: 14 }}>
-                    Supprimer ce projet efface sa base ({bytes(p.size_bytes)}). Cette action est définitive.
+                    {t("projects.deleteWarn", { size: bytes(p.size_bytes) })}
                   </span>
                 </div>
-                <button type="button" className="btn" onClick={() => setConfirming(null)}>Annuler</button>
+                <button type="button" className="btn" onClick={() => setConfirming(null)}>{t("common.cancel")}</button>
                 <button
                   type="button"
                   className="btn btn-danger-solid"
@@ -63,7 +66,7 @@ export default function ProjectsView({
                     setConfirming(null);
                   })}
                 >
-                  Supprimer définitivement
+                  {t("projects.deleteForever")}
                 </button>
               </li>
             ) : (
@@ -80,19 +83,19 @@ export default function ProjectsView({
                         });
                       }}
                     >
-                      <label htmlFor={`rename-${p.id}`} className="sr-only">Nouveau titre</label>
+                      <label htmlFor={`rename-${p.id}`} className="sr-only">{t("projects.newTitle")}</label>
                       <input id={`rename-${p.id}`} className="input" value={renaming.title} autoFocus onChange={(e) => setRenaming({ id: p.id, title: e.target.value })} />
-                      <button type="submit" className="btn btn-primary" disabled={busy}>Renommer</button>
-                      <button type="button" className="btn" onClick={() => setRenaming(null)}>Annuler</button>
+                      <button type="submit" className="btn btn-primary" disabled={busy}>{t("projects.rename")}</button>
+                      <button type="button" className="btn" onClick={() => setRenaming(null)}>{t("common.cancel")}</button>
                     </form>
                   ) : (
                     <span style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                       <strong>{p.title}</strong>
-                      {p.id === current && <span className="muted" style={{ fontSize: 13 }}>projet ouvert</span>}
+                      {p.id === current && <span className="muted" style={{ fontSize: 13 }}>{t("projects.current")}</span>}
                     </span>
                   )}
                   <span className="muted" style={{ fontSize: 14 }}>
-                    {p.id}, créé le {longDate(p.created_at)}{p.description ? `. ${p.description}` : ""}
+                    {t("projects.meta", { id: p.id, date: longDate(p.created_at), description: p.description ? `. ${p.description}` : "" })}
                   </span>
                   {watching?.id === p.id ? (
                     <form
@@ -102,42 +105,42 @@ export default function ProjectsView({
                         act(async () => {
                           await api.updateProject(p.id, { watch_dir: watching.dir });
                           setWatching(null);
-                          setNotice(watching.dir ? `${p.id} suit maintenant ${watching.dir} : les fichiers sont en cours d'import.` : `${p.id} ne suit plus de dossier.`);
+                          setNotice(watching.dir ? translate("projects.watchingNow", { id: p.id, dir: watching.dir }) : translate("projects.unwatched", { id: p.id }));
                         });
                       }}
                     >
-                      <label htmlFor={`watch-${p.id}`} className="sr-only">Dossier surveillé</label>
+                      <label htmlFor={`watch-${p.id}`} className="sr-only">{t("projects.watchedDir")}</label>
                       <input
                         id={`watch-${p.id}`}
                         className="input"
                         style={{ flex: "1 1 220px" }}
-                        placeholder="nom du dossier sous /watch, vide pour arrêter"
+                        placeholder={t("projects.watchPh")}
                         value={watching.dir}
                         autoFocus
                         onChange={(e) => setWatching({ id: p.id, dir: e.target.value })}
                       />
-                      <button type="submit" className="btn btn-primary" disabled={busy}>Enregistrer</button>
-                      <button type="button" className="btn" onClick={() => setWatching(null)}>Annuler</button>
+                      <button type="submit" className="btn btn-primary" disabled={busy}>{t("common.save")}</button>
+                      <button type="button" className="btn" onClick={() => setWatching(null)}>{t("common.cancel")}</button>
                     </form>
                   ) : p.watch_dir ? (
                     <span style={{ fontSize: 14 }}>
-                      Suit <span className="mono">/watch/{p.watch_dir}</span>
-                      {p.watch && `, ${p.watch.files} fichiers suivis`}
-                      {p.watch?.last_scan && `, dernier passage ${new Date(p.watch.last_scan * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
-                      {p.watch?.last_error && <span className="danger-text">. Erreur : {p.watch.last_error}</span>}
+                      {t.rich("projects.follows", { dir: <span className="mono">/watch/{p.watch_dir}</span> })}
+                      {p.watch && `, ${t("projects.filesWatched", { n: p.watch.files })}`}
+                      {p.watch?.last_scan && `, ${t("projects.lastScan", { time: new Date(p.watch.last_scan * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) })}`}
+                      {p.watch?.last_error && <span className="danger-text">. {t("projects.watchError", { error: p.watch.last_error })}</span>}
                     </span>
                   ) : null}
                 </div>
-                <span className="muted" style={{ fontSize: 14 }}>{bytes(p.size_bytes)} sur disque</span>
+                <span className="muted" style={{ fontSize: 14 }}>{t("projects.onDisk", { size: bytes(p.size_bytes) })}</span>
                 {p.id !== current && (
-                  <button type="button" className="btn btn-primary" onClick={() => { onOpen(p.id); go("carte"); }}>Ouvrir</button>
+                  <button type="button" className="btn btn-primary" onClick={() => { onOpen(p.id); go("carte"); }}>{t("common.open")}</button>
                 )}
                 {renaming?.id !== p.id && (
-                  <button type="button" className="btn" onClick={() => setRenaming({ id: p.id, title: p.title })}>Renommer</button>
+                  <button type="button" className="btn" onClick={() => setRenaming({ id: p.id, title: p.title })}>{t("projects.rename")}</button>
                 )}
                 {watching?.id !== p.id && (
                   <button type="button" className="btn" onClick={() => setWatching({ id: p.id, dir: p.watch_dir ?? "" })}>
-                    {p.watch_dir ? "Changer de dossier" : "Suivre un dossier"}
+                    {p.watch_dir ? t("projects.changeDir") : t("projects.watchDir")}
                   </button>
                 )}
                 {p.watch_dir && (
@@ -147,17 +150,24 @@ export default function ProjectsView({
                     disabled={busy}
                     onClick={() => act(async () => {
                       const r = await api.scanWatch(p.id);
-                      setNotice(`${p.id} : ${r.added} ajoutés, ${r.changed} modifiés, ${r.removed} retirés, ${r.unchanged} inchangés${r.errors.length ? `, ${r.errors.length} erreurs` : ""}.`);
+                      setNotice(translate("projects.scanResult", {
+                        id: p.id,
+                        added: r.added,
+                        changed: r.changed,
+                        removed: r.removed,
+                        unchanged: r.unchanged,
+                        errors: r.errors.length ? translate("projects.scanErrors", { n: r.errors.length }) : "",
+                      }));
                     })}
                   >
-                    Analyser maintenant
+                    {t("projects.scanNow")}
                   </button>
                 )}
-                <button type="button" className="btn btn-danger" onClick={() => setConfirming(p.id)}>Supprimer</button>
+                <button type="button" className="btn btn-danger" onClick={() => setConfirming(p.id)}>{t("common.delete")}</button>
               </li>
             ),
           )}
-          {projects.length === 0 && <li className="muted">Aucun projet. Créez-en un ci-dessous.</li>}
+          {projects.length === 0 && <li className="muted">{t("projects.none")}</li>}
         </ul>
 
         <form
@@ -175,45 +185,43 @@ export default function ProjectsView({
             });
           }}
         >
-          <h2 id="new-project-title">Nouveau projet</h2>
+          <h2 id="new-project-title">{t("projects.new")}</h2>
           <div className="toolbar" style={{ alignItems: "flex-start", gap: 12 }}>
             <div className="field" style={{ flex: "1 1 200px" }}>
-              <label htmlFor="project-id">Identifiant</label>
-              <input id="project-id" className="input" required value={id} placeholder="juridique-2026" onChange={(e) => setId(e.target.value)} aria-describedby="project-id-hint" />
-              <span id="project-id-hint" className={`hint${slugHint ? " danger-text" : ""}`}>Minuscules, chiffres, tirets. Devient le nom du dossier.</span>
+              <label htmlFor="project-id">{t("projects.id")}</label>
+              <input id="project-id" className="input" required value={id} placeholder={t("projects.idPh")} onChange={(e) => setId(e.target.value)} aria-describedby="project-id-hint" />
+              <span id="project-id-hint" className={`hint${slugHint ? " danger-text" : ""}`}>{t("projects.idHint")}</span>
             </div>
             <div className="field" style={{ flex: "1 1 200px" }}>
-              <label htmlFor="project-title">Titre</label>
-              <input id="project-title" className="input" value={title} placeholder="Veille juridique 2026" onChange={(e) => setTitle(e.target.value)} />
+              <label htmlFor="project-title">{t("projects.titleLabel")}</label>
+              <input id="project-title" className="input" value={title} placeholder={t("projects.titlePh")} onChange={(e) => setTitle(e.target.value)} />
             </div>
           </div>
           <div className="field">
-            <label htmlFor="project-desc">Description</label>
+            <label htmlFor="project-desc">{t("projects.description")}</label>
             <textarea id="project-desc" className="textarea" rows={2} style={{ minHeight: 64 }} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy || !id || !!slugHint}>Créer le projet</button>
+          <button type="submit" className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy || !id || !!slugHint}>{t("projects.create")}</button>
         </form>
       </section>
 
       <aside className="git-card" aria-labelledby="git-title">
-        <h2 id="git-title">Partager un projet via git</h2>
-        <p style={{ fontSize: 14, color: "var(--ink-2)" }}>Un projet tient dans un dossier. Montez-le depuis votre dépôt et commitez-le comme n'importe quel fichier.</p>
+        <h2 id="git-title">{t("projects.gitTitle")}</h2>
+        <p style={{ fontSize: 14, color: "var(--ink-2)" }}>{t("projects.gitIntro")}</p>
         <pre className="code">{`docker run -p 8080:8080 \\
-  -v ./mon-depot/.innerrag:/data/projects/${current || "mon-projet"} \\
+  -v ./${repo}/.innerrag:/data/projects/${current || t("common.exampleProject")} \\
   innerrag`}</pre>
         <ul>
-          <li><span className="mono">innerrag.lbdb</span> : la base, cohérente après chaque écriture. Vous pouvez commiter sans arrêter le serveur.</li>
-          <li><span className="mono">project.json</span> : titre, description et modèle d'embedding utilisé.</li>
-          <li><span className="mono">.gitignore</span> : écarte les fichiers temporaires.</li>
+          <li>{t.rich("projects.lbdb", { file: <span className="mono">innerrag.lbdb</span> })}</li>
+          <li>{t.rich("projects.projectJson", { file: <span className="mono">project.json</span> })}</li>
+          <li>{t.rich("projects.gitignore", { file: <span className="mono">.gitignore</span> })}</li>
         </ul>
-        <h3 style={{ marginTop: 6 }}>Suivre un dossier de documentation</h3>
+        <h3 style={{ marginTop: 6 }}>{t("projects.watchTitle")}</h3>
         <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
-          Montez un dossier sous <span className="mono">/watch</span> (par exemple le <span className="mono">docs/</span> d'un dépôt)
-          et associez-le à un projet : ses fichiers sont importés, puis tenus à jour toutes les 30 secondes. Seuls les passages
-          modifiés sont recalculés.
+          {t.rich("projects.watchIntro", { watch: <span className="mono">/watch</span>, docs: <span className="mono">docs/</span> })}
         </p>
-        <pre className="code">{`-v ./mon-depot/docs:/watch/mon-depot-docs:ro`}</pre>
-        <p className="note">La base est un fichier binaire : git ne sait pas fusionner deux modifications parallèles. Convenez de qui ingère à quel moment.</p>
+        <pre className="code">{`-v ./${repo}/docs:/watch/${repo}-docs:ro`}</pre>
+        <p className="note">{t("projects.binaryNote")}</p>
       </aside>
     </div>
   );

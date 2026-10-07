@@ -3,7 +3,8 @@ import { api, type DocumentSummary } from "../api";
 import { href } from "../App";
 import { DEFAULT_BRIDGE, health, send, type BridgeEvent, type BridgeHealth } from "../chat";
 import { Blocks, parse, type Linker } from "../markdown";
-import { num, plural } from "../util";
+import { locale, translate, useT, type Key, type T } from "../i18n";
+import { num } from "../util";
 
 type Part =
   | { kind: "text"; text: string }
@@ -33,8 +34,9 @@ const STRICT_STORAGE = "innerrag.chatStrict";
 /** Conversations kept per project in this browser. */
 const KEPT_CONVERSATIONS = 30;
 
-const MODELS = [
-  { value: "", label: "Celui de Claude Code" },
+// Model names are not translated; the empty value is the bridge's default.
+const MODELS: { value: string; label: string; key?: Key }[] = [
+  { value: "", label: "", key: "chat.modelDefault" },
   { value: "opus", label: "Opus" },
   { value: "sonnet", label: "Sonnet" },
   { value: "haiku", label: "Haiku" },
@@ -50,7 +52,7 @@ function loadConversations(project: string): Conversation[] {
   return list;
 }
 
-const conversationTitle = (c: Conversation) => c.exchanges[0]?.question ?? "Nouvelle conversation";
+const conversationTitle = (c: Conversation) => c.exchanges[0]?.question ?? translate("chat.newConversation");
 /** Tool results kept in the browser are cut to this length. */
 const KEPT_RESULT = 6000;
 
@@ -71,35 +73,34 @@ function save(key: string, value: unknown) {
   }
 }
 
-const quote = (v: unknown) => (typeof v === "string" && v ? ` « ${v} »` : "");
-
 /** What a tool call did, in words. */
-function toolLabel(name: string, input: Record<string, unknown>): string {
+function toolLabel(t: T, name: string, input: Record<string, unknown>): string {
+  const quote = (v: unknown) => (typeof v === "string" && v ? ` ${t("common.quoted", { text: v })}` : "");
   switch (name) {
     case "search_knowledge":
-      return `${input.mode === "map" ? "Survole" : "Recherche"}${quote(input.query)}`;
+      return t(input.mode === "map" ? "tool.map" : "tool.search", { q: quote(input.query) });
     case "explore_entity":
-      return `Explore l'entité${quote(input.name)}`;
+      return t("tool.entity", { q: quote(input.name) });
     case "explore_relation":
-      return `Examine le lien${quote(input.a)} et${quote(input.b)}`;
+      return t("tool.relation", { a: quote(input.a), b: quote(input.b) });
     case "list_documents":
-      return "Liste les documents";
+      return t("tool.listDocs");
     case "docs_for":
-      return `Cherche la doc de${quote(input.target)}`;
+      return t("tool.docsFor", { q: quote(input.target) });
     case "doc_drift":
-      return "Cherche la doc périmée";
+      return t("tool.drift");
     case "read_passages":
-      return `Lit ${Array.isArray(input.ids) ? input.ids.length : ""} passage${Array.isArray(input.ids) && input.ids.length > 1 ? "s" : ""}${input.window ? " avec leur contexte" : ""}`;
+      return (Array.isArray(input.ids) ? t("tool.read", { n: input.ids.length }) : t("tool.readSome")) + (input.window ? t("tool.withContext") : "");
     case "cite_sources":
-      return input.outcome === "not_found" ? "Signale une question sans réponse" : `Note les sources de sa réponse (${Array.isArray(input.chunk_ids) ? input.chunk_ids.length : 0})`;
+      return input.outcome === "not_found" ? t("tool.notFound") : t("tool.cite", { n: Array.isArray(input.chunk_ids) ? input.chunk_ids.length : 0 });
     case "graph_stats":
-      return "Consulte les chiffres de la base";
+      return t("tool.stats");
     case "run_cypher":
-      return "Interroge le graphe en Cypher";
+      return t("tool.cypher");
     case "list_projects":
-      return "Liste les projets";
+      return t("tool.projects");
     case "ingestion_status":
-      return "Vérifie les ingestions";
+      return t("tool.ingestions");
     default:
       return name;
   }
@@ -136,7 +137,9 @@ export default function AssistantView({ project }: { project: string }) {
   const [bridge, setBridge] = useState(() => load<string>(BRIDGE_STORAGE, "") || DEFAULT_BRIDGE);
   const [bridgeDraft, setBridgeDraft] = useState(bridge);
   const [status, setStatus] = useState<BridgeHealth | null>(null);
-  const [offline, setOffline] = useState("");
+  const t = useT();
+  /** Why the bridge is unavailable: Claude Code is down, or no bridge answers. */
+  const [offline, setOffline] = useState<"" | "claude" | "bridge">("");
   const [checking, setChecking] = useState(true);
   const [saved, setSaved] = useState<Conversation[]>(() => loadConversations(project));
   const [conversation, setConversation] = useState<Conversation>(() => loadConversations(project)[0] ?? fresh());
@@ -144,7 +147,8 @@ export default function AssistantView({ project }: { project: string }) {
   const [strict, setStrict] = useState(() => load<boolean>(STRICT_STORAGE, true));
   const [confirmClear, setConfirmClear] = useState(false);
   const [draft, setDraft] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  /** Seeds of the starter questions, drawn from the graph; the sentences follow the language. */
+  const [seeds, setSeeds] = useState<{ top?: string; link?: [string, string] } | null>(null);
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const abort = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -156,10 +160,10 @@ export default function AssistantView({ project }: { project: string }) {
     try {
       const h = await health(bridge, AbortSignal.timeout(4000));
       setStatus(h);
-      setOffline(h.ok ? "" : "Claude Code ne répond pas sur cette machine.");
+      setOffline(h.ok ? "" : "claude");
     } catch {
       setStatus(null);
-      setOffline(`Aucun pont à l'adresse ${bridge}.`);
+      setOffline("bridge");
     } finally {
       setChecking(false);
     }
@@ -180,14 +184,19 @@ export default function AssistantView({ project }: { project: string }) {
       const byId = new Map(g.nodes.map((n) => [n.id, n]));
       const top = [...g.nodes].sort((a, b) => b.mentions - a.mentions)[0];
       const link = [...g.edges].filter((e) => e.weight >= 3).sort((a, b) => b.strength - a.strength)[0];
-      const out = ["Quels sont les grands sujets de cette base ?"];
-      if (top) out.push(`Que dit la base sur ${top.name} ?`);
-      if (link && byId.has(link.source) && byId.has(link.target)) {
-        out.push(`Quel rapport entre ${byId.get(link.source)!.name} et ${byId.get(link.target)!.name} ?`);
-      }
-      setSuggestions(out);
-    }).catch(() => setSuggestions([]));
+      setSeeds({
+        top: top?.name,
+        link: link && byId.has(link.source) && byId.has(link.target) ? [byId.get(link.source)!.name, byId.get(link.target)!.name] : undefined,
+      });
+    }).catch(() => setSeeds(null));
   }, [project]);
+  const suggestions = seeds
+    ? [
+        t("chat.suggestTopics"),
+        ...(seeds.top ? [t("chat.suggestEntity", { name: seeds.top })] : []),
+        ...(seeds.link ? [t("chat.suggestLink", { a: seeds.link[0], b: seeds.link[1] })] : []),
+      ]
+    : [];
 
   // Keep the conversations across page changes; never store a half-finished answer as running.
   useEffect(() => {
@@ -257,7 +266,7 @@ export default function AssistantView({ project }: { project: string }) {
         update((x) => ({
           ...x,
           status: e.ok ? "done" : "error",
-          error: e.ok ? undefined : e.error ?? "Claude n'a pas pu répondre.",
+          error: e.ok ? undefined : e.error ?? translate("chat.noAnswer"),
           meta: { duration_ms: e.duration_ms, turns: e.turns, input_tokens: e.input_tokens, output_tokens: e.output_tokens },
         }));
         break;
@@ -276,12 +285,12 @@ export default function AssistantView({ project }: { project: string }) {
     abort.current = ctrl;
     try {
       await send(bridge, { project, message, session: conversation.session, model: model || undefined, strict, conversation: conversation.id }, onEvent, ctrl.signal);
-      update((x) => (x.status === "running" ? { ...x, status: "error", error: "Le pont a coupé la réponse." } : x));
+      update((x) => (x.status === "running" ? { ...x, status: "error", error: translate("chat.cut") } : x));
     } catch (err) {
       if (ctrl.signal.aborted) {
         update((x) => ({ ...x, status: "stopped" }));
       } else {
-        update((x) => ({ ...x, status: "error", error: (err as Error).message === "Failed to fetch" ? `Le pont ne répond plus (${bridge}).` : (err as Error).message }));
+        update((x) => ({ ...x, status: "error", error: (err as Error).message === "Failed to fetch" ? translate("chat.bridgeGone", { bridge }) : (err as Error).message }));
         check();
       }
     } finally {
@@ -327,11 +336,8 @@ export default function AssistantView({ project }: { project: string }) {
     <section className="page chat-page" aria-labelledby="chat-title">
       <div className="page-head">
         <div>
-          <h1 id="chat-title">Assistant</h1>
-          <p>
-            Le Claude Code de cette machine répond à partir du projet <strong>{project}</strong> : il interroge la base par MCP,
-            puis cite ses sources. Il utilise votre abonnement Claude, sans clé d'API.
-          </p>
+          <h1 id="chat-title">{t("chat.title")}</h1>
+          <p>{t.rich("chat.intro", { project: <strong>{project}</strong> })}</p>
         </div>
       </div>
 
@@ -340,17 +346,18 @@ export default function AssistantView({ project }: { project: string }) {
 
       {!ready && !checking && (
         <section className="panel bridge-setup" aria-labelledby="bridge-title">
-          <h2 id="bridge-title">Démarrer le pont vers Claude Code</h2>
+          <h2 id="bridge-title">{t("chat.setupTitle")}</h2>
           <p>
-            {offline} Le serveur innerrag tourne dans Docker et ne peut pas lancer le Claude Code de votre poste : un petit
-            script fait le lien. Lancez-le depuis le dossier d'innerrag, sur la machine où vous êtes connecté à Claude Code.
+            {offline === "claude" ? t("chat.offlineClaude") : offline === "bridge" ? t("chat.offlineBridge", { bridge }) : ""} {t("chat.setupText")}
           </p>
           <pre className="code">{`python3 scripts/chat-bridge.py          # macOS, Linux
 py scripts\\chat-bridge.py              # Windows`}</pre>
           <p className="muted">
-            Il écoute sur 127.0.0.1:18765 et ne répond qu'à cette interface. Claude n'y a accès qu'aux outils de lecture
-            d'innerrag : ni terminal, ni fichiers, ni ingestion. Options : <span className="mono">--model sonnet</span>,{" "}
-            <span className="mono">--innerrag http://localhost:18080</span>, <span className="mono">--allow-writes</span>.
+            {t.rich("chat.setupNote", {
+              model: <span className="mono">--model sonnet</span>,
+              innerrag: <span className="mono">--innerrag http://localhost:18080</span>,
+              writes: <span className="mono">--allow-writes</span>,
+            })}
           </p>
           <form
             className="toolbar"
@@ -363,10 +370,10 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
             }}
           >
             <label className="field-box" style={{ flex: "1 1 280px" }}>
-              Adresse du pont
+              {t("chat.bridgeAddress")}
               <input type="text" value={bridgeDraft} onChange={(e) => setBridgeDraft(e.target.value)} style={{ flex: 1 }} />
             </label>
-            <button type="submit" className="btn btn-primary">Réessayer</button>
+            <button type="submit" className="btn btn-primary">{t("chat.retry")}</button>
           </form>
         </section>
       )}
@@ -374,7 +381,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
       <div className="chat-thread">
         {empty && ready && (
           <div className="chat-start">
-            <p className="muted">Pour commencer :</p>
+            <p className="muted">{t("chat.start")}</p>
             <div className="toolbar">
               {suggestions.map((s) => (
                 <button key={s} type="button" className="btn chat-suggestion" onClick={() => ask(s)}>{s}</button>
@@ -384,19 +391,19 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
         )}
 
         {conversation.exchanges.map((x, i) => (
-          <article key={i} className="chat-exchange" aria-label={`Question ${i + 1}`}>
+          <article key={i} className="chat-exchange" aria-label={t("chat.questionN", { n: String(i + 1) })}>
             <p className="chat-question">{x.question}</p>
             <div className="chat-answer">
               {x.parts.some((p) => p.kind === "tool") && (
-                <ol className="chat-steps" aria-label="Appels à innerrag">
+                <ol className="chat-steps" aria-label={t("chat.stepsAria")}>
                   {x.parts.filter((p): p is Extract<Part, { kind: "tool" }> => p.kind === "tool").map((p) => (
                     <li key={p.id}>
                       <details>
                         <summary>
                           <span className={`chat-step-dot${p.result === undefined ? " busy" : p.error ? " failed" : ""}`} aria-hidden="true" />
-                          <span className="chat-step-label">{toolLabel(p.name, p.input)}</span>
+                          <span className="chat-step-label">{toolLabel(t, p.name, p.input)}</span>
                           <span className="chat-step-size">
-                            {p.result === undefined ? "en cours" : p.error ? "erreur" : `≈ ${num(p.tokens ?? tokens(p.result))} tokens`}
+                            {p.result === undefined ? t("chat.stepRunning") : p.error ? t("chat.stepError") : t("chat.stepTokens", { n: p.tokens ?? tokens(p.result) })}
                           </span>
                         </summary>
                         {p.result !== undefined && <pre className="chat-step-result">{p.result}</pre>}
@@ -411,18 +418,22 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
               {x.status === "running" && (
                 <p className="chat-wait" role="status">
                   {x.parts.at(-1)?.kind === "tool" && (x.parts.at(-1) as { result?: string }).result === undefined
-                    ? "Interroge innerrag…"
-                    : x.parts.some((p) => p.kind === "text") ? "Rédige…" : "Réfléchit…"}
+                    ? t("chat.querying")
+                    : x.parts.some((p) => p.kind === "text") ? t("chat.writing") : t("chat.thinking")}
                 </p>
               )}
-              {x.status === "stopped" && <p className="muted">Réponse arrêtée.</p>}
+              {x.status === "stopped" && <p className="muted">{t("chat.stopped")}</p>}
               {x.status === "error" && <div className="error-banner" role="alert">{x.error}</div>}
               {x.meta && (
                 <p className="chat-meta">
-                  {num(Math.round(x.meta.duration_ms / 100) / 10)} s, {plural(x.meta.turns, "tour", "tours")},{" "}
-                  {num(x.meta.input_tokens)} tokens lus, {num(x.meta.output_tokens)} écrits
+                  {t("chat.meta", {
+                    s: num(Math.round(x.meta.duration_ms / 100) / 10),
+                    turns: t("chat.turns", { n: x.meta.turns }),
+                    read: x.meta.input_tokens,
+                    written: x.meta.output_tokens,
+                  })}
                   {x.model && `, ${MODELS.find((m) => m.value === x.model)?.label ?? x.model}`}
-                  {x.strict === false && ", connaissances générales permises"}
+                  {x.strict === false && t("chat.general")}
                 </p>
               )}
             </div>
@@ -438,13 +449,13 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
           ask(draft);
         }}
       >
-        <label htmlFor="chat-input" className="sr-only">Votre question</label>
+        <label htmlFor="chat-input" className="sr-only">{t("chat.yourQuestion")}</label>
         <textarea
           id="chat-input"
           ref={inputRef}
           className="textarea"
           rows={2}
-          placeholder={ready ? "Posez une question sur les documents du projet" : "Démarrez le pont pour discuter avec Claude"}
+          placeholder={ready ? t("chat.placeholder") : t("chat.placeholderOff")}
           value={draft}
           disabled={!ready}
           onChange={(e) => setDraft(e.target.value)}
@@ -457,25 +468,25 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
         />
         <div className="chat-composer-foot">
           <span className="muted">
-            Entrée pour envoyer, Maj+Entrée pour aller à la ligne.
-            {totals.input > 0 && ` Cette conversation : ${num(totals.input)} tokens lus, ${num(totals.output)} écrits.`}
+            {t("chat.enterHint")}
+            {totals.input > 0 && t("chat.totals", { read: totals.input, written: totals.output })}
           </span>
           {running ? (
-            <button type="button" className="btn btn-danger" onClick={() => abort.current?.abort()}>Arrêter</button>
+            <button type="button" className="btn btn-danger" onClick={() => abort.current?.abort()}>{t("chat.stop")}</button>
           ) : (
-            <button type="submit" className="btn btn-primary" disabled={!ready || !draft.trim()}>Envoyer</button>
+            <button type="submit" className="btn btn-primary" disabled={!ready || !draft.trim()}>{t("chat.send")}</button>
           )}
         </div>
       </form>
       </div>
 
-      <aside className="chat-side" aria-label="Réglages et conversations">
+      <aside className="chat-side" aria-label={t("chat.sideAria")}>
         <section className="panel chat-side-box">
           <span className={`bridge-status${ready ? " on" : ""}`} role="status">
-            {checking ? "Recherche du pont…" : ready ? `Claude Code ${status?.claude?.replace(" (Claude Code)", "") ?? ""} connecté` : "Pont arrêté"}
+            {checking ? t("chat.looking") : ready ? t("chat.connected", { version: status?.claude?.replace(" (Claude Code)", "") ?? "" }) : t("chat.bridgeOff")}
           </span>
           <label className="field">
-            <span className="label">Modèle</span>
+            <span className="label">{t("chat.model")}</span>
             <select
               className="input"
               value={model}
@@ -484,9 +495,9 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                 save(MODEL_STORAGE, JSON.stringify(e.target.value));
               }}
             >
-              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {MODELS.map((m) => <option key={m.value} value={m.value}>{m.key ? t(m.key) : m.label}</option>)}
             </select>
-            <span className="hint">Changeable à tout moment, même au milieu d'une conversation.</span>
+            <span className="hint">{t("chat.modelHint")}</span>
           </label>
           <label className="chat-switch">
             <input
@@ -499,11 +510,11 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
               }}
             />
             <span>
-              <strong>Documents seulement</strong>
+              <strong>{t("chat.strict")}</strong>
               <span className="hint">
                 {strict
-                  ? "Claude ne répond qu'à partir des passages trouvés et dit quand la base ne contient pas la réponse."
-                  : "Claude peut compléter avec ses connaissances, dans une partie « Hors documents » séparée."}
+                  ? t("chat.strictOn")
+                  : t("chat.strictOff")}
               </span>
             </span>
           </label>
@@ -511,11 +522,11 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
 
         <section className="panel chat-side-box" aria-labelledby="chats-title">
           <div className="chat-side-head">
-            <h2 id="chats-title">Conversations</h2>
-            <button type="button" className="btn" onClick={restart} disabled={running || empty}>Nouvelle</button>
+            <h2 id="chats-title">{t("chat.conversations")}</h2>
+            <button type="button" className="btn" onClick={restart} disabled={running || empty}>{t("chat.new")}</button>
           </div>
           {saved.length === 0 ? (
-            <p className="muted">Elles sont gardées dans ce navigateur, par projet.</p>
+            <p className="muted">{t("chat.keptHere")}</p>
           ) : (
             <ul className="chat-list">
               {saved.map((c) => (
@@ -523,25 +534,25 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                   <button type="button" className="chat-list-open" onClick={() => open(c)} disabled={running} title={conversationTitle(c)}>
                     <span className="chat-list-title">{conversationTitle(c)}</span>
                     <span className="chat-list-meta">
-                      {new Date(c.at).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })},{" "}
-                      {plural(c.exchanges.length, "question", "questions")}
+                      {new Date(c.at).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })},{" "}
+                      {t("chat.questions", { n: c.exchanges.length })}
                     </span>
                   </button>
-                  <button type="button" className="chat-list-delete" aria-label={`Supprimer la conversation « ${conversationTitle(c)} »`} onClick={() => remove(c.id)} disabled={running}>×</button>
+                  <button type="button" className="chat-list-delete" aria-label={t("chat.deleteConv", { title: conversationTitle(c) })} onClick={() => remove(c.id)} disabled={running}>×</button>
                 </li>
               ))}
             </ul>
           )}
           {saved.length > 0 && (confirmClear ? (
             <div className="chat-clear">
-              <span>Effacer les {saved.length} conversations de ce projet ?</span>
+              <span>{t("chat.clearConfirm", { n: saved.length })}</span>
               <div className="toolbar">
-                <button type="button" className="btn" onClick={() => setConfirmClear(false)}>Annuler</button>
-                <button type="button" className="btn btn-danger-solid" onClick={clearAll}>Tout effacer</button>
+                <button type="button" className="btn" onClick={() => setConfirmClear(false)}>{t("common.cancel")}</button>
+                <button type="button" className="btn btn-danger-solid" onClick={clearAll}>{t("chat.clearAll")}</button>
               </div>
             </div>
           ) : (
-            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)} disabled={running}>Effacer les conversations</button>
+            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)} disabled={running}>{t("chat.clearConvs")}</button>
           ))}
         </section>
       </aside>

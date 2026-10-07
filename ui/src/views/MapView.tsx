@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from "react-force-graph-2d";
 import { api, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
 import { href } from "../App";
-import { CloseIcon, SearchIcon } from "../Icons";
-import { cssVar, labelColor, labelName, labelVar, num, plural, splitHighlights, STATUS_LABEL, STRENGTH_FULL, STRENGTH_RAMP, strengthColor, strengthLabel, fr2 } from "../util";
+import { CloseIcon, DocTypeIcon, SearchIcon } from "../Icons";
+import { translate, useT } from "../i18n";
+import { cssVar, docKind, docKindInfo, labelColor, labelName, labelVar, num, num2, splitHighlights, statusLabel, STRENGTH_FULL, STRENGTH_RAMP, strengthColor, strengthLabel } from "../util";
 
 interface NodeData {
   id: string;
@@ -64,6 +65,9 @@ export default function MapView({ project, params }: { project: string; params: 
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(params.get("entity"));
   const [detail, setDetail] = useState<EntityDetail | null>(null);
+  // Document whose passages the entity panel shows (all documents when null).
+  const [docFilter, setDocFilter] = useState<string | null>(null);
+  const [allNeighbours, setAllNeighbours] = useState(false);
   /** A clicked link: why are these two entities connected? */
   const [relation, setRelation] = useState<RelationDetail | null>(null);
   const [error, setError] = useState("");
@@ -74,6 +78,7 @@ export default function MapView({ project, params }: { project: string; params: 
   const fitted = useRef(false);
   const [boxRef, size] = useSize<HTMLDivElement>();
   const themeTick = useThemeTick();
+  const t = useT();
 
   const merge = useCallback((view: GraphView, replace: boolean) => {
     setData((prev) => {
@@ -151,18 +156,23 @@ export default function MapView({ project, params }: { project: string; params: 
   }, [params, expand]);
 
   useEffect(() => {
+    setDocFilter(null);
+    setAllNeighbours(false);
+  }, [selected]);
+
+  useEffect(() => {
     if (!selected) {
       setDetail(null);
       return;
     }
     let live = true;
-    p.entity(selected)
+    p.entity(selected, docFilter ?? undefined)
       .then((d) => live && setDetail(d))
       .catch((e) => live && setError((e as Error).message));
     return () => {
       live = false;
     };
-  }, [p, selected]);
+  }, [p, selected, docFilter]);
 
   // Escape closes the side panel.
   useEffect(() => {
@@ -278,7 +288,7 @@ export default function MapView({ project, params }: { project: string; params: 
       if (hit) {
         setSelected(hit.id);
         await expand(hit.id);
-      } else setError(`Aucune entité ne contient « ${find} ».`);
+      } else setError(translate("map.noMatch", { q: find }));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -342,7 +352,7 @@ export default function MapView({ project, params }: { project: string; params: 
 
   return (
     <>
-      <section className="map" aria-label="Carte des entités" ref={boxRef}>
+      <section className="map" aria-label={t("map.aria")} ref={boxRef}>
         <svg className="map-relief" aria-hidden="true" preserveAspectRatio="xMidYMid slice" viewBox="0 0 900 900">
           <filter id="relief" x="0" y="0" width="100%" height="100%">
             <feTurbulence type="fractalNoise" baseFrequency="0.0042" numOctaves="3" seed="11" />
@@ -363,7 +373,7 @@ export default function MapView({ project, params }: { project: string; params: 
             height={size.height}
             graphData={visible}
             backgroundColor="rgba(0,0,0,0)"
-            nodeLabel={(n) => `${n.name} (${labelName(n.label)}, ${plural(n.mentions, "passage", "passages")})`}
+            nodeLabel={(n) => t("map.nodeTip", { name: n.name, label: labelName(n.label), passages: t("common.passages", { n: n.mentions }) })}
             nodeCanvasObject={drawNode}
             nodePointerAreaPaint={(node, color, ctx, scale) => {
               const r = radius(node.mentions, scale) + 4 / scale;
@@ -394,7 +404,7 @@ export default function MapView({ project, params }: { project: string; params: 
             linkLabel={(l) => {
               const a = data.nodes.find((n) => n.id === endId(l.source))?.name ?? endId(l.source);
               const b = data.nodes.find((n) => n.id === endId(l.target))?.name ?? endId(l.target);
-              return `${a} — ${b} : ${plural(l.weight, "passage en commun", "passages en commun")}, force ${strengthLabel(l.strength ?? 0)}`;
+              return t("map.linkTip", { a, b, shared: t("common.sharedPassages", { n: l.weight }), strength: strengthLabel(l.strength ?? 0) });
             }}
             onLinkClick={(l) => {
               setSelected(null);
@@ -427,11 +437,11 @@ export default function MapView({ project, params }: { project: string; params: 
         <div className="map-toolbar toolbar">
           <form className="field-box search-box" role="search" onSubmit={onFind}>
             <SearchIcon size={18} />
-            <label htmlFor="find" className="sr-only">Trouver une entité</label>
+            <label htmlFor="find" className="sr-only">{t("map.find")}</label>
             <input
               id="find"
               type="search"
-              placeholder="Trouver une entité"
+              placeholder={t("map.find")}
               value={find}
               list="entity-names"
               onChange={(e) => setFind(e.target.value)}
@@ -441,50 +451,45 @@ export default function MapView({ project, params }: { project: string; params: 
             </datalist>
           </form>
           <label className="field-box">
-            Lien minimum
+            {t("map.minLink")}
             <select value={minWeight} onChange={(e) => setMinWeight(Number(e.target.value))}>
-              <option value={1}>1 passage</option>
-              <option value={2}>2 passages</option>
-              <option value={3}>3 passages</option>
-              <option value={5}>5 passages</option>
-              {![1, 2, 3, 5].includes(minWeight) && <option value={minWeight}>{minWeight} passages</option>}
+              {[1, 2, 3, 5].map((w) => <option key={w} value={w}>{t("common.passages", { n: w })}</option>)}
+              {![1, 2, 3, 5].includes(minWeight) && <option value={minWeight}>{t("common.passages", { n: minWeight })}</option>}
             </select>
           </label>
           <label className="field-box">
-            Entités
+            {t("map.entities")}
             <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              <option value={50}>50 plus citées</option>
-              <option value={150}>150 plus citées</option>
-              <option value={400}>400 plus citées</option>
+              {[50, 150, 400].map((n) => <option key={n} value={n}>{t("map.topCited", { n })}</option>)}
             </select>
           </label>
           <label className="field-box">
             <input type="checkbox" checked={drafts} onChange={(e) => setDrafts(e.target.checked)} />
-            Afficher les brouillons
+            {t("map.showDrafts")}
           </label>
-          <button type="button" className="btn" onClick={fit}>Tout afficher</button>
+          <button type="button" className="btn" onClick={fit}>{t("map.showAll")}</button>
         </div>
 
-        <aside className="cartouche" aria-label="Cartouche du projet">
+        <aside className="cartouche" aria-label={t("map.summaryAria")}>
           <div className="cartouche-head">
             <strong>{project}</strong>
-            <span className="muted" style={{ fontSize: 13 }}>{loading ? "chargement…" : `${visible.nodes.length} affichées`}</span>
+            <span className="muted" style={{ fontSize: 13 }}>{loading ? t("map.loading") : t("map.shown", { n: visible.nodes.length })}</span>
           </div>
           {stats && (
             <>
               <dl>
-                <div><dt>Documents</dt><dd>{num(stats.documents)}</dd></div>
-                <div><dt>Passages</dt><dd>{num(stats.chunks)}</dd></div>
-                <div><dt>Entités</dt><dd>{num(stats.entities)}</dd></div>
-                <div><dt>Relations</dt><dd>{num(stats.relations)}</dd></div>
+                <div><dt>{t("map.documents")}</dt><dd>{num(stats.documents)}</dd></div>
+                <div><dt>{t("map.passages")}</dt><dd>{num(stats.chunks)}</dd></div>
+                <div><dt>{t("map.entities")}</dt><dd>{num(stats.entities)}</dd></div>
+                <div><dt>{t("map.relations")}</dt><dd>{num(stats.relations)}</dd></div>
               </dl>
               <div className="muted" style={{ fontSize: 13 }}>
-                {plural(stats.published, "document publié", "documents publiés")}, {plural(stats.drafts, "brouillon", "brouillons")}
+                {t("map.publishedDocs", { n: stats.published })}, {t("map.drafts", { n: stats.drafts })}
               </div>
             </>
           )}
           {legend.length > 0 && (
-            <ul className="legend" aria-label="Types d'entités : cliquez pour masquer ou afficher">
+            <ul className="legend" aria-label={t("map.legendAria")}>
               {legend.map(({ label, count }) => (
                 <li key={label}>
                   <button
@@ -505,23 +510,23 @@ export default function MapView({ project, params }: { project: string; params: 
                   </button>
                 </li>
               ))}
-              <li className="legend-draft"><span className="dot draft" />Cité seulement dans des brouillons</li>
+              <li className="legend-draft"><span className="dot draft" />{t("map.draftOnly")}</li>
             </ul>
           )}
-          <figure className="legend-strength" aria-label="Couleur des liens selon leur force">
-            <figcaption>Force des liens</figcaption>
+          <figure className="legend-strength" aria-label={t("map.strengthAria")}>
+            <figcaption>{t("map.strengthTitle")}</figcaption>
             <span className="legend-ramp" style={{ background: `linear-gradient(to right, ${STRENGTH_RAMP.join(", ")})` }} />
             <span className="legend-ramp-labels">
-              <span>faible</span>
-              <span>{fr2(STRENGTH_FULL / 4)}</span>
-              <span>{fr2(STRENGTH_FULL)} et plus</span>
+              <span>{t("map.weak")}</span>
+              <span>{num2(STRENGTH_FULL / 4)}</span>
+              <span>{t("map.andMore", { n: num2(STRENGTH_FULL) })}</span>
             </span>
-            <span className="muted">Part des passages qui citent les deux entités ensemble.</span>
+            <span className="muted">{t("map.strengthHint")}</span>
           </figure>
           {autoWeight && minWeight === autoWeight && (
             <p className="muted" style={{ fontSize: 13 }}>
-              Graphe dense : liens de moins de {autoWeight} passages en commun masqués.{" "}
-              <button type="button" className="link-button" onClick={() => { setAutoWeight(null); setMinWeight(1); }}>Tout afficher</button>
+              {t("map.dense", { n: autoWeight })}{" "}
+              <button type="button" className="link-button" onClick={() => { setAutoWeight(null); setMinWeight(1); }}>{t("map.showAll")}</button>
             </p>
           )}
           {error && <div className="error-banner" role="alert">{error}</div>}
@@ -529,44 +534,43 @@ export default function MapView({ project, params }: { project: string; params: 
 
         {!loading && stats && stats.entities === 0 && (
           <div className="empty" style={{ position: "absolute", inset: 0, justifyContent: "center", pointerEvents: "none" }}>
-            <p>La carte est vide. Ajoutez un document : ses entités et leurs liens apparaîtront ici.</p>
-            <a className="btn btn-primary" href={href("documents", { new: "1" })} style={{ pointerEvents: "auto" }}>Ajouter un document</a>
+            <p>{t("map.empty")}</p>
+            <a className="btn btn-primary" href={href("documents", { new: "1" })} style={{ pointerEvents: "auto" }}>{t("common.addDocument")}</a>
           </div>
         )}
       </section>
 
       {relation && !selected && (
-        <aside className="side" aria-label="Lien entre deux entités">
+        <aside className="side" aria-label={t("map.relationAria")}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span className="muted" style={{ fontSize: 14 }}>Pourquoi ce lien ?</span>
+              <span className="muted" style={{ fontSize: 14 }}>{t("map.whyLink")}</span>
               <h1 className="side-title" style={{ fontSize: 26 }}>
                 <button type="button" className="link-button" style={{ color: "inherit" }} onClick={() => { setRelation(null); setSelected(relation.a.id); }}>{relation.a.name}</button>
                 {" — "}
                 <button type="button" className="link-button" style={{ color: "inherit" }} onClick={() => { setRelation(null); setSelected(relation.b.id); }}>{relation.b.name}</button>
               </h1>
             </div>
-            <button type="button" className="icon-button" aria-label="Fermer le panneau" onClick={() => setRelation(null)}>
+            <button type="button" className="icon-button" aria-label={t("common.closePanel")} onClick={() => setRelation(null)}>
               <CloseIcon />
             </button>
           </div>
           <dl className="relation-figures">
-            <div><dt>passages en commun</dt><dd>{num(relation.weight)}</dd></div>
-            <div><dt>force du lien</dt><dd>{strengthLabel(relation.strength)}</dd></div>
+            <div><dt>{t("map.sharedLabel")}</dt><dd>{num(relation.weight)}</dd></div>
+            <div><dt>{t("map.strengthLabel")}</dt><dd>{strengthLabel(relation.strength)}</dd></div>
           </dl>
           <p className="muted" style={{ fontSize: 14 }}>
-            La force est la part des passages citant {relation.a.name} ({num(relation.a.mentions)}) ou {relation.b.name} ({num(relation.b.mentions)})
-            qui citent les deux. Proche de 1 : elles vont toujours ensemble. Proche de 0 : l'une est citée partout, le lien est peu spécifique.
+            {t("map.strengthExplain", { a: relation.a.name, na: relation.a.mentions, b: relation.b.name, nb: relation.b.mentions })}
           </p>
           <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <h3>Passages qui les citent ensemble</h3>
+            <h3>{t("map.citedTogether")}</h3>
             {relation.passages.map((ps) => (
               <article key={ps.chunk_id} className="passage">
                 <div className="passage-head">
                   <a href={href("lire", ps.page ? { doc: ps.doc_id, page: String(ps.page) } : { doc: ps.doc_id, tab: "passages" })} style={{ fontWeight: 600 }}>
-                    {ps.doc_title}, {ps.page ? `page ${ps.page}` : `passage ${ps.idx + 1}`}
+                    {ps.doc_title}, {ps.page ? t("common.page", { n: String(ps.page) }) : t("common.passage", { n: String(ps.idx + 1) })}
                   </a>
-                  <span className={`status status-${ps.doc_status}`}>{STATUS_LABEL[ps.doc_status]}</span>
+                  <span className={`status status-${ps.doc_status}`}>{statusLabel(ps.doc_status)}</span>
                 </div>
                 <p>
                   {splitHighlights(ps.text, [relation.a.name, relation.b.name]).map((part, i) =>
@@ -576,57 +580,121 @@ export default function MapView({ project, params }: { project: string; params: 
               </article>
             ))}
             {relation.weight > relation.passages.length && (
-              <p className="muted" style={{ fontSize: 14 }}>Les {relation.passages.length} premiers sur {num(relation.weight)}.</p>
+              <p className="muted" style={{ fontSize: 14 }}>{t("map.firstOf", { n: relation.passages.length, total: relation.weight })}</p>
             )}
           </section>
         </aside>
       )}
 
       {selected && (
-        <aside className="side" aria-label="Entité sélectionnée">
+        <aside className="side" aria-label={t("map.entityAria")}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <h1 className="side-title" style={{ fontSize: 30 }} title={detail?.name}>{detail?.name ?? "…"}</h1>
               {detail && (
                 <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
                   <span className={`dot${detail.published_mentions === 0 ? " draft" : ""}`} style={{ background: labelVar(detail.label) }} />
-                  {labelName(detail.label)}, citée dans {plural(detail.mentions, "passage", "passages")}
-                  {detail.published_mentions === 0 && " (brouillons uniquement)"}
+                  {t("map.citedIn", { label: labelName(detail.label), passages: t("common.passages", { n: detail.mentions }) })}
+                  {detail.published_mentions === 0 && t("map.draftsOnly")}
                 </div>
               )}
             </div>
-            <button type="button" className="icon-button" aria-label="Fermer le panneau" onClick={() => setSelected(null)}>
+            <button type="button" className="icon-button" aria-label={t("common.closePanel")} onClick={() => setSelected(null)}>
               <CloseIcon />
             </button>
           </div>
           <div className="toolbar">
-            <button type="button" className="btn btn-primary" onClick={() => expand(selected)}>Déplier le voisinage</button>
-            <button type="button" className="btn" onClick={() => focus(selected)}>Centrer sur la carte</button>
+            <button type="button" className="btn btn-primary" onClick={() => expand(selected)}>{t("map.expand")}</button>
+            <button type="button" className="btn" onClick={() => focus(selected)}>{t("map.center")}</button>
           </div>
+          {detail && detail.documents.length > 0 && (
+            <section className="entity-docs" aria-labelledby="entity-docs-title">
+              <h3 id="entity-docs-title">{t("map.inDocuments")}</h3>
+              <ul>
+                {detail.documents.map((d) => {
+                  const kind = docKind(d.source);
+                  const share = Math.round((100 * d.passages) / Math.max(1, detail.mentions));
+                  const active = docFilter === d.doc_id;
+                  return (
+                    <li key={d.doc_id} className={active ? "active" : ""}>
+                      <DocTypeIcon kind={kind} {...docKindInfo(kind)} />
+                      <div className="entity-doc-main">
+                        <a
+                          className="entity-doc-title"
+                          href={href("lire", d.pages[0] ? { doc: d.doc_id, page: String(d.pages[0]) } : { doc: d.doc_id })}
+                          title={t("map.openDoc")}
+                        >
+                          {d.title}
+                        </a>
+                        <span className="entity-doc-bar" aria-hidden="true"><span style={{ width: `${share}%` }} /></span>
+                        <span className="entity-doc-meta">
+                          {t("map.docShare", { passages: t("common.passages", { n: d.passages }), share })}
+                          {d.pages.length > 0 && (
+                            <>
+                              {", "}
+                              {t("map.pagesList", { pages: "" })}
+                              {d.pages.slice(0, 8).map((pg, i) => (
+                                <span key={pg}>
+                                  {i > 0 && ", "}
+                                  <a href={href("lire", { doc: d.doc_id, page: String(pg) })}>{pg}</a>
+                                </span>
+                              ))}
+                              {d.pages.length > 8 && "…"}
+                            </>
+                          )}
+                          {d.status === "DRAFT" && ` (${statusLabel("DRAFT").toLowerCase()})`}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className={`btn entity-doc-filter${active ? " btn-primary" : ""}`}
+                        aria-pressed={active}
+                        onClick={() => setDocFilter(active ? null : d.doc_id)}
+                      >
+                        {active ? t("map.filtered") : t("map.filterDoc")}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
           {detail && detail.neighbours.length > 0 && (
             <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <h3>Apparaît avec</h3>
+              <h3>{t("map.appearsWith")}</h3>
               <ul className="neighbours">
-                {detail.neighbours.slice(0, 20).map((n) => (
+                {detail.neighbours.slice(0, allNeighbours ? 50 : 10).map((n) => (
                   <li key={n.id}>
                     <span className="dot" style={{ background: labelVar(n.label) }} />
                     <button type="button" onClick={() => select(n.id)}>{n.name}</button>
                     <button
                       type="button"
                       className="link-score"
-                      title="Voir les passages qui les citent ensemble"
+                      title={t("map.seeTogether")}
                       onClick={() => p.relation(selected, n.id).then((r) => { setSelected(null); setRelation(r); })}
                     >
-                      {plural(n.weight, "passage", "passages")}, force {strengthLabel(n.strength)}
+                      {t("map.linkScore", { passages: t("common.passages", { n: n.weight }), strength: strengthLabel(n.strength) })}
                     </button>
                   </li>
                 ))}
               </ul>
+              {!allNeighbours && detail.neighbours.length > 10 && (
+                <button type="button" className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setAllNeighbours(true)}>
+                  {t("map.moreNeighbours", { n: Math.min(50, detail.neighbours.length) - 10 })}
+                </button>
+              )}
             </section>
           )}
           {detail && detail.passages.length > 0 && (
             <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <h3>Passages qui la citent</h3>
+              <div className="toolbar" style={{ justifyContent: "space-between" }}>
+                <h3>
+                  {docFilter
+                    ? t("map.citingIn", { doc: detail.documents.find((d) => d.doc_id === docFilter)?.title ?? "" })
+                    : t("map.citing")}
+                </h3>
+                {docFilter && <button type="button" className="btn" onClick={() => setDocFilter(null)}>{t("map.allDocs")}</button>}
+              </div>
               {detail.passages.map((ps) => (
                 <article key={ps.chunk_id} className="passage">
                   <div className="passage-head">
@@ -634,9 +702,9 @@ export default function MapView({ project, params }: { project: string; params: 
                       href={href("lire", ps.page ? { doc: ps.doc_id, page: String(ps.page) } : { doc: ps.doc_id, tab: "passages" })}
                       style={{ fontWeight: 600 }}
                     >
-                      {ps.doc_title}, {ps.page ? `page ${ps.page}` : `passage ${ps.idx + 1}`}
+                      {ps.doc_title}, {ps.page ? t("common.page", { n: String(ps.page) }) : t("common.passage", { n: String(ps.idx + 1) })}
                     </a>
-                    <span className={`status status-${ps.doc_status}`}>{STATUS_LABEL[ps.doc_status]}</span>
+                    <span className={`status status-${ps.doc_status}`}>{statusLabel(ps.doc_status)}</span>
                   </div>
                   <p>
                     {splitHighlights(ps.text, [detail.name]).map((part, i) =>

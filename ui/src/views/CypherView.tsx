@@ -1,20 +1,22 @@
 import { useMemo, useState } from "react";
 import { api, type CypherResult } from "../api";
+import { useT, type Key } from "../i18n";
 
-const EXAMPLES: { label: string; query: string }[] = [
+// The tag of the third example is a sample value, written in the interface language.
+const examples = (tag: string): { label: Key; query: string }[] => [
   {
-    label: "Entités les plus citées",
+    label: "cypher.exTopEntities",
     query: "MATCH (e:Entity)<-[m:MENTIONS]-(:Chunk)\nRETURN e.name, e.label, count(m) AS mentions\nORDER BY mentions DESC\nLIMIT 20",
   },
   {
-    label: "Relations les plus fortes",
+    label: "cypher.exStrongest",
     query: "MATCH (a:Entity)-[r:RELATED]->(b:Entity)\nRETURN a.name, b.name, r.weight\nORDER BY r.weight DESC\nLIMIT 20",
   },
   {
-    label: "Documents d'un tag",
-    query: "MATCH (d:Document)\nWHERE list_contains(d.tags, 'chimie')\nRETURN d.title, d.status, d.tags",
+    label: "cypher.exTag",
+    query: `MATCH (d:Document)\nWHERE list_contains(d.tags, '${tag}')\nRETURN d.title, d.status, d.tags`,
   },
-  { label: "Tables du schéma", query: "CALL SHOW_TABLES() RETURN *" },
+  { label: "cypher.exTables", query: "CALL SHOW_TABLES() RETURN *" },
 ];
 
 function Cell({ value }: { value: unknown }) {
@@ -25,6 +27,8 @@ function Cell({ value }: { value: unknown }) {
 
 export default function CypherView({ project }: { project: string }) {
   const p = useMemo(() => api.project(project), [project]);
+  const t = useT();
+  const EXAMPLES = examples(t("cypher.exampleTag"));
   const [query, setQuery] = useState(EXAMPLES[1].query);
   const [result, setResult] = useState<CypherResult | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -35,10 +39,10 @@ export default function CypherView({ project }: { project: string }) {
     if (!query.trim()) return;
     setBusy(true);
     setError("");
-    const t = performance.now();
+    const start = performance.now();
     try {
       setResult(await p.cypher(query));
-      setElapsed(Math.round(performance.now() - t));
+      setElapsed(Math.round(performance.now() - start));
     } catch (e) {
       setResult(null);
       setError((e as Error).message);
@@ -51,13 +55,13 @@ export default function CypherView({ project }: { project: string }) {
     <section className="page" aria-labelledby="cypher-title">
       <div className="page-head">
         <div>
-          <h1 id="cypher-title">Console Cypher</h1>
-          <p>Lecture seule. Les requêtes qui écrivent, chargent ou exportent des fichiers sont refusées.</p>
+          <h1 id="cypher-title">{t("cypher.title")}</h1>
+          <p>{t("cypher.intro")}</p>
         </div>
       </div>
       <div className="toolbar">
         {EXAMPLES.map((ex) => (
-          <button key={ex.label} type="button" className="pill" onClick={() => setQuery(ex.query)}>{ex.label}</button>
+          <button key={ex.label} type="button" className="pill" onClick={() => setQuery(ex.query)}>{t(ex.label)}</button>
         ))}
       </div>
       <form
@@ -67,7 +71,7 @@ export default function CypherView({ project }: { project: string }) {
           run();
         }}
       >
-        <label htmlFor="cypher" className="sr-only">Requête Cypher</label>
+        <label htmlFor="cypher" className="sr-only">{t("cypher.query")}</label>
         <textarea
           id="cypher"
           className="cypher-editor"
@@ -83,11 +87,12 @@ export default function CypherView({ project }: { project: string }) {
           }}
         />
         <div className="toolbar">
-          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Exécution…" : "Exécuter"}</button>
-          <span className="muted" style={{ fontSize: 14 }}>Ctrl + Entrée pour exécuter</span>
+          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? t("cypher.running") : t("cypher.run")}</button>
+          <span className="muted" style={{ fontSize: 14 }}>{t("cypher.shortcut")}</span>
           {result && (
             <span className="muted" style={{ fontSize: 14, marginLeft: "auto" }}>
-              {result.rows.length.toLocaleString("fr-FR")} lignes en {elapsed} ms{result.truncated ? " (tronqué à 1 000)" : ""}
+              {t("cypher.summary", { rows: t("cypher.rows", { n: result.rows.length }), ms: String(elapsed) })}
+              {result.truncated ? t("cypher.truncated", { n: 1000 }) : ""}
             </span>
           )}
         </div>
@@ -105,7 +110,7 @@ export default function CypherView({ project }: { project: string }) {
               ))}
             </tbody>
           </table>
-          {result.rows.length === 0 && <div className="empty"><p>La requête n'a renvoyé aucune ligne.</p></div>}
+          {result.rows.length === 0 && <div className="empty"><p>{t("cypher.empty")}</p></div>}
         </div>
       )}
     </section>

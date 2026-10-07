@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type FeedbackReport } from "../api";
 import { href } from "../App";
-import { fr2, num, plural } from "../util";
+import { locale, translate, useT } from "../i18n";
+import { num, num2 } from "../util";
 
-const when = (at: number) => new Date(at).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const when = (at: number) => new Date(at).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export default function GapsView({ project }: { project: string }) {
   const p = useMemo(() => api.project(project), [project]);
+  const t = useT();
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -42,17 +44,14 @@ export default function GapsView({ project }: { project: string }) {
     <section className="page" aria-labelledby="gaps-title">
       <div className="page-head">
         <div>
-          <h1 id="gaps-title">Lacunes</h1>
-          <p>
-            Ce que l'usage révèle de la base : les questions qu'elle ne couvre pas, et les réponses que les agents ont
-            effectivement tirées de ses passages. Les agents le signalent avec l'outil MCP <span className="mono">cite_sources</span>.
-          </p>
+          <h1 id="gaps-title">{t("gaps.title")}</h1>
+          <p>{t.rich("gaps.intro", { tool: <span className="mono">cite_sources</span> })}</p>
         </div>
         {report && (
           <dl className="totals gaps-totals">
-            <div><dt>recherches</dt><dd>{num(report.searches)}</dd></div>
-            <div><dt>sans passage pertinent</dt><dd>{num(report.unanswered_searches)}</dd></div>
-            <div><dt>réponses citées</dt><dd>{num(report.citations)}</dd></div>
+            <div><dt>{t("gaps.searches")}</dt><dd>{num(report.searches)}</dd></div>
+            <div><dt>{t("gaps.unanswered")}</dt><dd>{num(report.unanswered_searches)}</dd></div>
+            <div><dt>{t("gaps.citations")}</dt><dd>{num(report.citations)}</dd></div>
           </dl>
         )}
       </div>
@@ -64,31 +63,28 @@ export default function GapsView({ project }: { project: string }) {
         <div className="gaps-layout">
           <section className="panel gaps-col" aria-labelledby="gaps-list-title">
             <div>
-              <h2 id="gaps-list-title">Questions sans réponse</h2>
-              <p className="muted">
-                Regroupées par sens, les plus fréquentes d'abord. À documenter, ou à garder comme questions hors sujet pour
-                vérifier que la recherche ne répond rien.
-              </p>
+              <h2 id="gaps-list-title">{t("gaps.listTitle")}</h2>
+              <p className="muted">{t("gaps.listIntro")}</p>
             </div>
             {report.gaps.length === 0 ? (
-              <p className="empty-line">Aucune pour l'instant.</p>
+              <p className="empty-line">{t("gaps.none")}</p>
             ) : (
               <ul className="gaps-list">
                 {report.gaps.map((g) => (
                   <li key={g.key}>
                     <div className="gaps-item-head">
                       <strong>{g.question}</strong>
-                      <span className="gaps-count">{plural(g.count, "fois", "fois")}</span>
+                      <span className="gaps-count">{t("gaps.times", { n: g.count })}</span>
                     </div>
                     {g.variants.length > 0 && (
-                      <p className="muted gaps-variants">Aussi : {g.variants.slice(0, 3).map((v) => `« ${v} »`).join(", ")}{g.variants.length > 3 ? "…" : ""}</p>
+                      <p className="muted gaps-variants">{t("gaps.also", { list: g.variants.slice(0, 3).map((v) => t("common.quoted", { text: v })).join(", ") })}{g.variants.length > 3 ? "…" : ""}</p>
                     )}
                     <p className="gaps-meta">
                       {[
-                        g.unanswered_searches > 0 && plural(g.unanswered_searches, "recherche sans passage", "recherches sans passage"),
-                        g.reported > 0 && `${plural(g.reported, "signalement", "signalements")} d'agent`,
-                        g.best_similarity !== null && `meilleure similarité ${fr2(g.best_similarity)}`,
-                        `dernière fois le ${when(g.last_at)}`,
+                        g.unanswered_searches > 0 && t("gaps.unansweredSearches", { n: g.unanswered_searches }),
+                        g.reported > 0 && t("gaps.reports", { n: g.reported }),
+                        g.best_similarity !== null && t("common.bestSim", { n: num2(g.best_similarity) }),
+                        t("gaps.lastTime", { date: when(g.last_at) }),
                       ].filter(Boolean).join(", ")}
                     </p>
                     <div className="toolbar">
@@ -96,17 +92,17 @@ export default function GapsView({ project }: { project: string }) {
                         type="button"
                         className="btn"
                         disabled={busy === g.key}
-                        onClick={() => act(g.key, () => p.acceptFeedback(g.key, true), "Ajoutée au jeu d'évaluation comme question hors sujet.")}
+                        onClick={() => act(g.key, () => p.acceptFeedback(g.key, true), translate("gaps.keptOffTopic"))}
                       >
-                        Garder comme hors sujet
+                        {t("gaps.keepOffTopic")}
                       </button>
                       <button
                         type="button"
                         className="btn"
                         disabled={busy === g.key}
-                        onClick={() => act(g.key, () => p.dismissFeedback(g.key), "Question écartée.")}
+                        onClick={() => act(g.key, () => p.dismissFeedback(g.key), translate("gaps.dismissedQuestion"))}
                       >
-                        Écarter
+                        {t("gaps.dismiss")}
                       </button>
                     </div>
                   </li>
@@ -117,51 +113,48 @@ export default function GapsView({ project }: { project: string }) {
 
           <section className="panel gaps-col" aria-labelledby="proposals-title">
             <div>
-              <h2 id="proposals-title">Réponses citées</h2>
-              <p className="muted">
-                Questions auxquelles un agent a répondu avec ces passages. Validez-les pour enrichir le jeu d'évaluation
-                sans le rédiger à la main.
-              </p>
+              <h2 id="proposals-title">{t("gaps.proposalsTitle")}</h2>
+              <p className="muted">{t("gaps.proposalsIntro")}</p>
             </div>
             {report.proposals.length === 0 ? (
-              <p className="empty-line">Aucune réponse citée en attente.</p>
+              <p className="empty-line">{t("gaps.noProposals")}</p>
             ) : (
               <ul className="gaps-list">
                 {report.proposals.map((pr) => (
                   <li key={pr.key}>
                     <div className="gaps-item-head">
                       <strong>{pr.question}</strong>
-                      {pr.partial && <span className="tool-kind writes">réponse partielle</span>}
+                      {pr.partial && <span className="tool-kind writes">{t("gaps.partial")}</span>}
                     </div>
                     <ul className="gaps-passages">
                       {pr.passages.map((c) => (
                         <li key={c.id}>
                           <a href={href("lire", c.page ? { doc: c.doc_id, page: String(c.page) } : { doc: c.doc_id, tab: "passages" })}>
-                            {c.doc_title}{c.page ? `, page ${c.page}` : ""}
+                            {c.doc_title}{c.page ? `, ${t("common.page", { n: String(c.page) })}` : ""}
                           </a>
                           <span className="muted"> {c.excerpt}…</span>
                         </li>
                       ))}
                     </ul>
                     <p className="gaps-meta">
-                      {plural(pr.count, "citation", "citations")}, dernière le {when(pr.last_at)}
+                      {t("gaps.citationsLine", { citations: t("gaps.citationsCount", { n: pr.count }), date: when(pr.last_at) })}
                     </p>
                     <div className="toolbar">
                       <button
                         type="button"
                         className="btn btn-primary"
                         disabled={busy === pr.key}
-                        onClick={() => act(pr.key, () => p.acceptFeedback(pr.key), "Ajoutée au jeu d'évaluation.")}
+                        onClick={() => act(pr.key, () => p.acceptFeedback(pr.key), translate("gaps.added"))}
                       >
-                        Ajouter au jeu d'évaluation
+                        {t("gaps.addToEval")}
                       </button>
                       <button
                         type="button"
                         className="btn"
                         disabled={busy === pr.key}
-                        onClick={() => act(pr.key, () => p.dismissFeedback(pr.key), "Réponse écartée.")}
+                        onClick={() => act(pr.key, () => p.dismissFeedback(pr.key), translate("gaps.dismissedAnswer"))}
                       >
-                        Écarter
+                        {t("gaps.dismiss")}
                       </button>
                     </div>
                   </li>

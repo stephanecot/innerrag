@@ -1,23 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type CodeDrift, type CodeKind, type DocSymbol, type DocsFor, type Project } from "../api";
 import { href } from "../App";
-import { num, plural } from "../util";
+import { useT, type Key } from "../i18n";
+import { num } from "../util";
 
-const KIND_LABEL: Record<CodeKind, string> = {
-  symbol: "symboles",
-  route: "routes",
-  env_var: "variables d'environnement",
-  path: "fichiers",
-  flag: "options de ligne de commande",
-};
-
-const KIND_ONE: Record<CodeKind, string> = {
-  symbol: "symbole",
-  route: "route",
-  env_var: "variable",
-  path: "fichier",
-  flag: "option",
-};
+const kindLabel = (kind: CodeKind): Key => `code.kinds.${kind}`;
+const kindOne = (kind: CodeKind): Key => `code.kind.${kind}`;
 
 const mentionHref = (m: DocSymbol["mentions"][number]) =>
   href("lire", m.page ? { doc: m.doc_id, page: String(m.page) } : { doc: m.doc_id, tab: "passages" });
@@ -31,6 +19,7 @@ export default function CodeView({ project, info, onChanged }: { project: string
   const [target, setTarget] = useState("");
   const [found, setFound] = useState<DocsFor | null>(null);
   const [looking, setLooking] = useState(false);
+  const t = useT();
 
   useEffect(() => setDir(info?.code_dir ?? ""), [info?.code_dir]);
 
@@ -68,12 +57,8 @@ export default function CodeView({ project, info, onChanged }: { project: string
     <section className="page" aria-labelledby="code-title">
       <div className="page-head">
         <div>
-          <h1 id="code-title">Documentation et code</h1>
-          <p>
-            Les éléments de code que les documents citent entre accents graves (symboles, fichiers, routes, variables
-            d'environnement, options) sont cherchés dans le dépôt du projet. Ceux qui n'y sont plus signalent une
-            documentation à revoir.
-          </p>
+          <h1 id="code-title">{t("code.title")}</h1>
+          <p>{t("code.intro")}</p>
         </div>
       </div>
 
@@ -94,16 +79,16 @@ export default function CodeView({ project, info, onChanged }: { project: string
         }}
       >
         <label className="field-box" style={{ flex: "1 1 320px" }}>
-          Dépôt de code
+          {t("code.repo")}
           <span className="muted mono">/watch/</span>
-          <input type="text" value={dir} placeholder="dossier du dépôt, monté sous /watch" onChange={(e) => setDir(e.target.value)} style={{ flex: 1 }} />
+          <input type="text" value={dir} placeholder={t("code.repoPh")} onChange={(e) => setDir(e.target.value)} style={{ flex: 1 }} />
         </label>
-        <button type="submit" className="btn btn-primary" disabled={saving}>Enregistrer</button>
+        <button type="submit" className="btn btn-primary" disabled={saving}>{t("common.save")}</button>
         {drift && (
           <dl className="totals code-totals">
-            <div><dt>fichiers de code</dt><dd>{num(drift.files)}</dd></div>
-            <div><dt>éléments cités</dt><dd>{num(drift.symbols)}</dd></div>
-            <div><dt>absents du code</dt><dd style={{ color: drift.missing.length ? "var(--danger)" : undefined }}>{num(drift.missing.length)}</dd></div>
+            <div><dt>{t("code.files")}</dt><dd>{num(drift.files)}</dd></div>
+            <div><dt>{t("code.cited")}</dt><dd>{num(drift.symbols)}</dd></div>
+            <div><dt>{t("code.missing")}</dt><dd style={{ color: drift.missing.length ? "var(--danger)" : undefined }}>{num(drift.missing.length)}</dd></div>
           </dl>
         )}
       </form>
@@ -113,22 +98,26 @@ export default function CodeView({ project, info, onChanged }: { project: string
       {!info?.code_dir ? (
         <div className="panel empty">
           <p>
-            Indiquez le dossier du dépôt, monté dans le conteneur sous <span className="mono">/watch</span> (par exemple{" "}
-            <span className="mono">-v ./mon-depot:/watch/mon-depot:ro</span>).
+            {t.rich("code.setup", {
+              watch: <span className="mono">/watch</span>,
+              example: <span className="mono">{`-v ./${t("common.exampleRepo")}:/watch/${t("common.exampleRepo")}:ro`}</span>,
+            })}
           </p>
         </div>
       ) : (
         <div className="gaps-layout">
           <section className="panel gaps-col" aria-labelledby="drift-title">
             <div>
-              <h2 id="drift-title">Absents du code</h2>
+              <h2 id="drift-title">{t("code.missingTitle")}</h2>
               {drift && (
                 <p className="muted">
-                  Absents sur cités : {drift.by_kind.map(([k, n, f]) => `${KIND_LABEL[k]} ${n - f} sur ${n}`).join(", ")}.
+                  {t("code.ratio", {
+                    list: drift.by_kind.map(([k, n, f]) => t("code.ratioItem", { kind: t(kindLabel(k)), missing: String(n - f), cited: String(n) })).join(", "),
+                  })}
                 </p>
               )}
             </div>
-            {drift && byDoc.length === 0 && <p className="empty-line">Tout ce que la documentation cite existe dans le code.</p>}
+            {drift && byDoc.length === 0 && <p className="empty-line">{t("code.allFound")}</p>}
             {byDoc.map((g) => (
               <div key={g.doc} className="drift-doc">
                 <h3>{g.title} <span className="muted">({g.items.length})</span></h3>
@@ -136,10 +125,10 @@ export default function CodeView({ project, info, onChanged }: { project: string
                   {g.items.map((s) => (
                     <li key={`${s.kind}:${s.symbol}`}>
                       <code className="mono">{s.symbol}</code>
-                      <span className="drift-kind">{KIND_ONE[s.kind]}</span>
+                      <span className="drift-kind">{t(kindOne(s.kind))}</span>
                       <span className="drift-where">
                         {s.mentions.slice(0, 4).map((m, i) => (
-                          <a key={m.chunk_id} href={mentionHref(m)}>{m.page ? `p. ${m.page}` : `passage ${i + 1}`}</a>
+                          <a key={m.chunk_id} href={mentionHref(m)}>{m.page ? t("common.pageShort", { n: String(m.page) }) : t("common.passage", { n: String(i + 1) })}</a>
                         ))}
                       </span>
                     </li>
@@ -151,11 +140,8 @@ export default function CodeView({ project, info, onChanged }: { project: string
 
           <section className="panel gaps-col" aria-labelledby="docsfor-title">
             <div>
-              <h2 id="docsfor-title">Avant de modifier du code</h2>
-              <p className="muted">
-                Un fichier ou un symbole : les passages qui en parlent, à relire et peut-être à mettre à jour. Les agents ont
-                le même outil, <span className="mono">docs_for</span>.
-              </p>
+              <h2 id="docsfor-title">{t("code.beforeTitle")}</h2>
+              <p className="muted">{t.rich("code.beforeIntro", { tool: <span className="mono">docs_for</span> })}</p>
             </div>
             <form
               className="toolbar"
@@ -174,25 +160,25 @@ export default function CodeView({ project, info, onChanged }: { project: string
               }}
             >
               <label className="field-box" style={{ flex: "1 1 260px" }}>
-                <span className="sr-only">Fichier ou symbole</span>
+                <span className="sr-only">{t("code.target")}</span>
                 <input type="text" value={target} placeholder="src/search.rs, search_knowledge…" onChange={(e) => setTarget(e.target.value)} style={{ flex: 1 }} />
               </label>
-              <button type="submit" className="btn btn-primary" disabled={looking}>Chercher</button>
+              <button type="submit" className="btn btn-primary" disabled={looking}>{t("code.find")}</button>
             </form>
             {found && (
               <div className="docs-for">
-                {found.files.length > 0 && <p className="muted">Fichier : {found.files.join(", ")}</p>}
+                {found.files.length > 0 && <p className="muted">{t("code.fileLine", { files: found.files.join(", ") })}</p>}
                 {found.symbols.length === 0 ? (
-                  <p className="empty-line">Aucun passage ne cite « {found.target} » ni ce qu'il définit.</p>
+                  <p className="empty-line">{t("code.noPassage", { target: found.target })}</p>
                 ) : (
                   <ul className="drift-list">
                     {found.symbols.map((s) => (
                       <li key={`${s.kind}:${s.symbol}`}>
                         <code className="mono">{s.symbol}</code>
-                        <span className={`drift-kind${s.found ? "" : " missing"}`}>{s.found ? KIND_ONE[s.kind] : "absent du code"}</span>
+                        <span className={`drift-kind${s.found ? "" : " missing"}`}>{s.found ? t(kindOne(s.kind)) : t("code.absent")}</span>
                         <span className="drift-where">
                           {s.mentions.slice(0, 6).map((m, i) => (
-                            <a key={m.chunk_id} href={mentionHref(m)}>{m.doc_title}{m.page ? `, p. ${m.page}` : i ? ` (${i + 1})` : ""}</a>
+                            <a key={m.chunk_id} href={mentionHref(m)}>{m.doc_title}{m.page ? `, ${t("common.pageShort", { n: String(m.page) })}` : i ? ` (${i + 1})` : ""}</a>
                           ))}
                         </span>
                       </li>
@@ -200,7 +186,7 @@ export default function CodeView({ project, info, onChanged }: { project: string
                   </ul>
                 )}
                 <p className="muted" style={{ fontSize: 13 }}>
-                  {plural(found.symbols.reduce((n, s) => n + s.mentions.length, 0), "passage concerné", "passages concernés")}.
+                  {t("code.concerned", { n: found.symbols.reduce((n, s) => n + s.mentions.length, 0) })}.
                 </p>
               </div>
             )}

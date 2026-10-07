@@ -75,8 +75,18 @@ export interface EntitySummary {
   published_mentions: number;
 }
 
+export interface EntityDocument {
+  doc_id: string;
+  title: string;
+  status: Status;
+  source: string;
+  passages: number;
+  pages: number[];
+}
+
 export interface EntityDetail extends EntitySummary {
   neighbours: (EntitySummary & { weight: number; strength: number })[];
+  documents: EntityDocument[];
   passages: { chunk_id: string; doc_id: string; doc_title: string; doc_status: Status; idx: number; text: string; page: number | null }[];
 }
 
@@ -327,7 +337,7 @@ export const api = {
       tags: () => request<{ tag: string; count: number }[]>(`${base}/tags`),
       entities: (f: { q?: string; label?: string; limit?: number }) =>
         request<EntitySummary[]>(`${base}/entities${qs(f)}`),
-      entity: (id: string) => request<EntityDetail>(`${base}/entities/${enc(id)}`),
+      entity: (id: string, doc?: string) => request<EntityDetail>(`${base}/entities/${enc(id)}${qs({ doc })}`),
       relation: (a: string, b: string) => request<RelationDetail>(`${base}/relation${qs({ a, b })}`),
       graph: (f: { limit?: number; min_weight?: number; label?: string; include_drafts?: boolean }) =>
         request<GraphView>(`${base}/graph${qs(f)}`),

@@ -1,5 +1,6 @@
 // Client of the chat bridge (scripts/chat-bridge.py), which runs on the host next to a
 // logged-in Claude Code and streams its answers as newline-delimited JSON.
+import { translate } from "./i18n";
 
 export const DEFAULT_BRIDGE = "http://127.0.0.1:18765";
 
@@ -32,7 +33,7 @@ export type BridgeEvent =
 
 export async function health(bridge: string, signal?: AbortSignal): Promise<BridgeHealth> {
   const res = await fetch(`${bridge}/health`, { signal });
-  if (!res.ok) throw new Error(`le pont répond ${res.status}`);
+  if (!res.ok) throw new Error(translate("chat.bridgeStatus", { status: String(res.status) }));
   return res.json();
 }
 
@@ -51,7 +52,7 @@ export async function send(
   });
   if (!res.ok || !res.body) {
     const detail = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(detail.error ?? `le pont répond ${res.status}`);
+    throw new Error(detail.error ?? translate("chat.bridgeStatus", { status: String(res.status) }));
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

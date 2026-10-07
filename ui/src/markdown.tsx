@@ -1,6 +1,7 @@
 // Minimal markdown renderer for the reader: headings, paragraphs, lists, code fences,
 // pipe tables, page markers, **bold** and `code`. Produces React elements (no HTML injection).
 import type { ReactNode } from "react";
+import { useT } from "./i18n";
 
 export type Block =
   | { kind: "heading"; level: number; text: string; id: string }
@@ -123,6 +124,7 @@ export function inline(text: string, linker?: Linker, prefix = ""): ReactNode[] 
 export function Blocks({
   blocks, onPage, highlightPage, linker,
 }: { blocks: Block[]; onPage?: (page: number) => void; highlightPage?: number; linker?: Linker }) {
+  const t = useT();
   return (
     <>
       {blocks.map((b, i) => {
@@ -151,11 +153,11 @@ export function Blocks({
             return (
               <div key={i} id={`page-${b.page}`} className={`md-page${highlightPage === b.page ? " current" : ""}`}>
                 {onPage ? (
-                  <button type="button" onClick={() => onPage(b.page)} title="Ouvrir cette page dans le document original">
-                    page {b.page}
+                  <button type="button" onClick={() => onPage(b.page)} title={t("markdown.openPage")}>
+                    {t("common.page", { n: String(b.page) })}
                   </button>
                 ) : (
-                  <span>page {b.page}</span>
+                  <span>{t("common.page", { n: String(b.page) })}</span>
                 )}
               </div>
             );

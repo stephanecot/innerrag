@@ -1,22 +1,19 @@
 // Labels, colors and formatting shared by the views.
+import { locale, num, num2, translate, type Key } from "./i18n";
 
-const LABELS: Record<string, string> = {
-  person: "Personne",
-  organization: "Organisation",
-  location: "Lieu",
-  event: "Événement",
-  product: "Produit",
-  technology: "Technologie",
-};
+export { num, num2 };
 
-export const labelName = (label: string) => LABELS[label] ?? label.charAt(0).toUpperCase() + label.slice(1);
+const LABELS = new Set(["person", "organization", "location", "event", "product", "technology"]);
+
+export const labelName = (label: string) =>
+  LABELS.has(label) ? translate(`entity.${label}` as Key) : label.charAt(0).toUpperCase() + label.slice(1);
 
 /** CSS variable holding the legend color of an entity label. */
-export const labelVar = (label: string) => `var(--c-${label in LABELS ? label : "other"})`;
+export const labelVar = (label: string) => `var(--c-${LABELS.has(label) ? label : "other"})`;
 
 /** Resolved color (for canvas drawing, which cannot read CSS variables). */
 export function labelColor(label: string): string {
-  const name = `--c-${label in LABELS ? label : "other"}`;
+  const name = `--c-${LABELS.has(label) ? label : "other"}`;
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#6b6f73";
 }
 
@@ -33,11 +30,6 @@ export function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-const nf = new Intl.NumberFormat("fr-FR");
-export const num = (n: number) => nf.format(n);
-
-export const plural = (n: number, one: string, many: string) => `${num(n)} ${n > 1 ? many : one}`;
-
 /** LadybugDB timestamps come as "2026-10-06 20:38:49.321" (UTC). */
 export function parseDbDate(s: string): Date | null {
   if (!s) return null;
@@ -50,35 +42,29 @@ export function relativeDate(input: string | number | Date | null): string {
   const d = input instanceof Date ? input : typeof input === "number" ? new Date(input) : parseDbDate(input);
   if (!d) return String(input);
   const now = new Date();
-  const time = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return `aujourd'hui ${time}`;
+  const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return translate("date.today", { time });
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return `hier ${time}`;
-  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }) + ` ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return translate("date.yesterday", { time });
+  return d.toLocaleDateString(locale(), { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }) + ` ${time}`;
 }
 
 export function longDate(input: string): string {
   const d = parseDbDate(input) ?? new Date(input);
-  return Number.isNaN(d.getTime()) ? input : d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  return Number.isNaN(d.getTime()) ? input : d.toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" });
 }
 
 export function bytes(n: number): string {
-  if (n < 1024) return `${n} o`;
-  if (n < 1024 * 1024) return `${num(Math.round(n / 1024))} Ko`;
-  return `${(n / 1024 / 1024).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+  if (n < 1024) return translate("bytes.b", { n: String(n) });
+  if (n < 1024 * 1024) return translate("bytes.kb", { n: Math.round(n / 1024) });
+  return translate("bytes.mb", { n: (n / 1024 / 1024).toLocaleString(locale(), { maximumFractionDigits: 1 }) });
 }
 
-export const JOB_STAGE: Record<string, string> = {
-  queued: "En attente",
-  extracting: "Extraction",
-  embedding: "Vectorisation",
-  entities: "Extraction des entités",
-  writing: "Écriture dans la base",
-  done: "Terminé",
-  failed: "Échec",
-  cancelled: "Annulée",
-};
+const STAGES = new Set(["queued", "extracting", "embedding", "entities", "writing", "done", "failed", "cancelled"]);
+
+/** Label of an ingestion stage. */
+export const jobStage = (stage: string) => (STAGES.has(stage) ? translate(`stage.${stage}` as Key) : stage);
 
 /** Overall progress: vectors are quick, entities take most of the time. */
 export function jobPercent(job: { stage: string; done: number; total: number }): number {
@@ -92,30 +78,21 @@ export function jobPercent(job: { stage: string; done: number; total: number }):
 
 /** e5 similarities: relevant passages sit around 0.83–0.90, unrelated ones around 0.75–0.78. */
 export function relevance(similarity: number): { label: string; tone: "strong" | "good" | "weak" } {
-  if (similarity >= 0.86) return { label: "forte", tone: "strong" };
-  if (similarity >= 0.82) return { label: "bonne", tone: "good" };
-  return { label: "faible", tone: "weak" };
+  if (similarity >= 0.86) return { label: translate("relevance.strong"), tone: "strong" };
+  if (similarity >= 0.82) return { label: translate("relevance.good"), tone: "good" };
+  return { label: translate("relevance.weak"), tone: "weak" };
 }
 
-export const fr2 = (n: number) => n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const statusLabel = (status: "PUBLISHED" | "DRAFT") => translate(`status.${status}`);
 
-export const STATUS_LABEL = { PUBLISHED: "Publié", DRAFT: "Brouillon" } as const;
+/** Journal operations, in the order of the History filter. */
+export const OPERATIONS = ["search", "read", "cite", "ingest", "replace", "update", "delete", "explore", "cypher", "list_documents", "stats"];
+const CHANNELS = new Set(["mcp", "rest", "ui", "watch"]);
 
-export const OPERATION_LABEL: Record<string, string> = {
-  search: "Recherche",
-  read: "Lecture de passages",
-  cite: "Sources citées",
-  ingest: "Ingestion",
-  replace: "Remplacement",
-  update: "Métadonnées",
-  delete: "Suppression",
-  explore: "Exploration",
-  cypher: "Cypher",
-  list_documents: "Liste des documents",
-  stats: "Statistiques",
-};
-
-export const CHANNEL_LABEL: Record<string, string> = { mcp: "MCP", rest: "REST", ui: "Interface", watch: "Dossier" };
+/** Label of a journal operation, or the raw name when unknown. */
+export const operationLabel = (op: string) => (OPERATIONS.includes(op) ? translate(`op.${op}` as Key) : op);
+/** Label of a journal channel, or the raw name when unknown. */
+export const channelLabel = (channel: string) => (CHANNELS.has(channel) ? translate(`channel.${channel}` as Key) : channel);
 
 /** Highlights each occurrence of `terms` in `text` with <mark>. */
 export function splitHighlights(text: string, terms: string[]): { text: string; hit: boolean }[] {
@@ -131,7 +108,7 @@ export function splitHighlights(text: string, terms: string[]): { text: string; 
 }
 
 /** A link strength: a tiny but non-zero value reads "< 0,01" rather than a misleading 0. */
-export const strengthLabel = (n: number) => (n > 0 && n < 0.005 ? "< 0,01" : fr2(n));
+export const strengthLabel = (n: number) => (n > 0 && n < 0.005 ? `< ${num2(0.01)}` : num2(n));
 
 /** Link colors from weak to strong (Jaccard strength, saturating at STRENGTH_FULL). */
 export const STRENGTH_RAMP = ["#9fb3bd", "#e3a33b", "#b42318"];
@@ -162,11 +139,7 @@ export function docKind(source: string): DocKind {
   return "text";
 }
 
-export const DOC_KIND: Record<DocKind, { badge: string; label: string }> = {
-  pdf: { badge: "PDF", label: "PDF" },
-  word: { badge: "DOC", label: "Word" },
-  powerpoint: { badge: "PPT", label: "PowerPoint" },
-  markdown: { badge: "MD", label: "Markdown" },
-  html: { badge: "WEB", label: "Page web" },
-  text: { badge: "TXT", label: "Texte" },
-};
+const DOC_BADGE: Record<DocKind, string> = { pdf: "PDF", word: "DOC", powerpoint: "PPT", markdown: "MD", html: "WEB", text: "TXT" };
+
+/** Badge and readable name of a document kind (props of DocTypeIcon). */
+export const docKindInfo = (kind: DocKind) => ({ badge: DOC_BADGE[kind], label: translate(`kind.${kind}`) });
