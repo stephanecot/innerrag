@@ -248,6 +248,7 @@ export default function MapView({ project, params }: { project: string; params: 
   }, [visible.nodes.length]);
 
   const maxWeight = useMemo(() => Math.max(1, ...data.links.map((l) => l.weight)), [data.links]);
+  const linkWidth = (l: GLink) => 0.8 + 4 * Math.sqrt(l.strength ?? l.weight / maxWeight);
 
   const focus = (id: string) => {
     const node = data.nodes.find((n) => n.id === id);
@@ -356,7 +357,7 @@ export default function MapView({ project, params }: { project: string; params: 
         </svg>
 
         <div className="map-canvas">
-          <ForceGraph2D<NodeData, { weight: number }>
+          <ForceGraph2D<NodeData, { weight: number; strength: number }>
             ref={fg}
             width={size.width}
             height={size.height}
@@ -371,13 +372,28 @@ export default function MapView({ project, params }: { project: string; params: 
               ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI);
               ctx.fill();
             }}
-            linkColor={(l) => {
-              const touches = selected !== null && (endId(l.source) === selected || endId(l.target) === selected);
-              const alpha = selected === null ? 0.35 : touches ? 0.75 : 0.12;
-              return withAlpha(colors.ink, alpha);
-            }}
             // Thickness follows the link's strength (specificity), not its raw count.
-            linkWidth={(l) => 0.8 + 4 * Math.sqrt(l.strength ?? l.weight / maxWeight)}
+            linkWidth={(l) => linkWidth(l)}
+            // Each link blends the colors of its two ends; strong links are more opaque.
+            linkCanvasObjectMode={() => "replace"}
+            linkCanvasObject={(l, ctx, scale) => {
+              const s = l.source as GNode;
+              const t = l.target as GNode;
+              if (s?.x === undefined || s.y === undefined || t?.x === undefined || t.y === undefined) return;
+              const touches = selected !== null && (String(s.id) === selected || String(t.id) === selected);
+              const force = Math.sqrt(l.strength ?? l.weight / maxWeight);
+              const alpha = selected === null ? 0.3 + 0.55 * force : touches ? 0.9 : 0.07;
+              const gradient = ctx.createLinearGradient(s.x, s.y, t.x, t.y);
+              gradient.addColorStop(0, withAlpha(colors.label(s.label), alpha));
+              gradient.addColorStop(1, withAlpha(colors.label(t.label), alpha));
+              ctx.strokeStyle = gradient;
+              ctx.lineWidth = linkWidth(l) / scale;
+              ctx.lineCap = "round";
+              ctx.beginPath();
+              ctx.moveTo(s.x, s.y);
+              ctx.lineTo(t.x, t.y);
+              ctx.stroke();
+            }}
             linkLabel={(l) => {
               const a = data.nodes.find((n) => n.id === endId(l.source))?.name ?? endId(l.source);
               const b = data.nodes.find((n) => n.id === endId(l.target))?.name ?? endId(l.target);
