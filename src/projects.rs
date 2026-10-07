@@ -14,7 +14,7 @@ use crate::{Conflict, Invalid, NotFound};
 
 pub const DB_FILE: &str = "innerrag.lbdb";
 const META_FILE: &str = "project.json";
-const GITIGNORE: &str = "# LadybugDB transient files (the server checkpoints after every write)\n*.wal\n*.lock\n*.tmp\n";
+const GITIGNORE: &str = "# LadybugDB transient files (the server checkpoints after every write)\n*.wal\n*.lock\n*.tmp\n# Local watch bookkeeping\nwatch-state.json\n";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMeta {
@@ -25,6 +25,16 @@ pub struct ProjectMeta {
     /// Model used to compute the stored embeddings; the index is only valid for that model.
     pub embedding_model: String,
     pub embedding_dim: usize,
+    /// Folder (under the watch root) whose files are kept in sync with the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WatchInfo {
+    pub files: usize,
+    pub last_scan: Option<i64>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +43,8 @@ pub struct ProjectInfo {
     #[serde(flatten)]
     pub meta: ProjectMeta,
     pub size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch: Option<WatchInfo>,
 }
 
 pub struct Projects {
@@ -84,7 +96,7 @@ impl Projects {
         Ok(Self { root, open: RwLock::new(HashMap::new()), buffer_pool_mb, threads, embedding_model, dim })
     }
 
-    fn dir(&self, id: &str) -> PathBuf {
+    pub fn dir(&self, id: &str) -> PathBuf {
         self.root.join(id)
     }
 
@@ -103,6 +115,7 @@ impl Projects {
                 created_at: now_rfc3339(),
                 embedding_model: self.embedding_model.clone(),
                 embedding_dim: self.dim,
+                watch_dir: None,
             };
             self.write_meta(id, &meta)?;
             return Ok(meta);
@@ -118,7 +131,12 @@ impl Projects {
 
     pub fn info(&self, id: &str) -> Result<ProjectInfo> {
         validate_id(id)?;
-        Ok(ProjectInfo { id: id.to_string(), meta: self.read_meta(id)?, size_bytes: dir_size(&self.dir(id)) })
+        let meta = self.read_meta(id)?;
+        let watch = meta.watch_dir.as_ref().filter(|d| !d.is_empty()).map(|_| {
+            let state = crate::watch::load_state(&self.dir(id));
+            WatchInfo { files: state.files.len(), last_scan: state.last_scan, last_error: state.last_error }
+        });
+        Ok(ProjectInfo { id: id.to_string(), meta, size_bytes: dir_size(&self.dir(id)), watch })
     }
 
     pub fn list(&self) -> Result<Vec<ProjectInfo>> {
@@ -151,6 +169,7 @@ impl Projects {
             created_at: now_rfc3339(),
             embedding_model: self.embedding_model.clone(),
             embedding_dim: self.dim,
+            watch_dir: None,
         };
         self.write_meta(id, &meta)?;
         std::fs::write(dir.join(".gitignore"), GITIGNORE)?;
@@ -158,8 +177,18 @@ impl Projects {
         self.info(id)
     }
 
-    pub fn update(&self, id: &str, title: Option<String>, description: Option<String>) -> Result<ProjectInfo> {
+    /// `watch_dir`: `Some("")` stops following a folder.
+    pub fn update(
+        &self,
+        id: &str,
+        title: Option<String>,
+        description: Option<String>,
+        watch_dir: Option<String>,
+    ) -> Result<ProjectInfo> {
         let mut meta = self.info(id)?.meta;
+        if let Some(dir) = watch_dir {
+            meta.watch_dir = Some(dir.trim().to_string()).filter(|d| !d.is_empty());
+        }
         if let Some(t) = title.filter(|t| !t.trim().is_empty()) {
             meta.title = t;
         }

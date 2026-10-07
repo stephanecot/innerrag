@@ -3,15 +3,19 @@ mod chunk;
 mod config;
 mod db;
 mod embed;
+mod eval;
 mod explore;
 mod extract;
 mod history;
 mod ingest;
 mod jobs;
+mod keywords;
 mod mcp;
 mod ner;
 mod projects;
+mod rerank;
 mod search;
+mod watch;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,6 +39,8 @@ pub struct AppState {
     pub jobs: Arc<Jobs>,
     pub embedder: Embedder,
     pub ner: Ner,
+    /// Optional cross-encoder (present when `<models>/rerank` exists and is not disabled).
+    pub reranker: Option<rerank::Reranker>,
     pub models: serde_json::Value,
     pub started: Instant,
 }
@@ -108,7 +114,7 @@ fn convert(path: Option<&str>) -> Result<()> {
 
 fn extract_entities(text: &str) -> Result<()> {
     let config = Config::from_env();
-    let ner = Ner::load(&config.models_dir.join("ner"), config.threads, config.ner_threshold, false)?;
+    let ner = Ner::load(&config.models_dir.join("ner"), config.threads, config.ner_threshold, false, &config.entity_stopwords)?;
     for m in ner.extract(&[text.to_string()], &config.ner_labels)?.remove(0) {
         println!("{:.3}  {:<14} {}", m.score, m.label, m.name);
     }
@@ -142,11 +148,20 @@ fn load_state(config: Config) -> Result<AppState> {
     let t = Instant::now();
     let ner_dir = config.models_dir.join("ner");
     let (ner, ner_device) = on_device(&config, "NER model", |cuda| {
-        Ner::load(&ner_dir, config.threads, config.ner_threshold, cuda)
+        Ner::load(&ner_dir, config.threads, config.ner_threshold, cuda, &config.entity_stopwords)
             .with_context(|| format!("loading NER model from {}", ner_dir.display()))
     })?;
     tracing::info!(device = ner_device, elapsed_ms = t.elapsed().as_millis(), labels = ?config.ner_labels, "NER model loaded");
 
+    let rerank_dir = config.models_dir.join("rerank");
+    let (reranker, rerank_device) = if config.rerank && rerank_dir.join("model.onnx").exists() {
+        let t = Instant::now();
+        let (r, device) = on_device(&config, "reranker", |cuda| rerank::Reranker::load(&rerank_dir, config.threads, cuda))?;
+        tracing::info!(device, elapsed_ms = t.elapsed().as_millis(), "reranker loaded");
+        (Some(r), device)
+    } else {
+        (None, "none")
+    };
     let embedding_model =
         std::env::var("INNERRAG_EMBED_MODEL").unwrap_or_else(|_| embed_dir.display().to_string());
     let projects = Projects::new(
@@ -166,17 +181,25 @@ fn load_state(config: Config) -> Result<AppState> {
         "device": if embed_device == "cuda" || ner_device == "cuda" { "cuda" } else { "cpu" },
         "embedding_device": embed_device,
         "ner_device": ner_device,
+        "reranker": reranker.as_ref().map(|_| std::env::var("INNERRAG_RERANK_MODEL").unwrap_or_else(|_| rerank_dir.display().to_string())),
+        "reranker_device": rerank_device,
         "embedding": embedding_model,
         "ner": std::env::var("INNERRAG_NER_MODEL").unwrap_or_else(|_| ner_dir.display().to_string()),
     });
     let history = History::open(config.data_dir.join("history"))?;
-    Ok(AppState { config, projects, history, jobs: Jobs::start(), embedder, ner, models, started: Instant::now() })
+    Ok(AppState { config, projects, history, jobs: Jobs::start(), embedder, ner, reranker, models, started: Instant::now() })
 }
 
 fn serve() -> Result<()> {
     let config = Config::from_env();
     let bind = config.bind.clone();
     let state = Arc::new(load_state(config)?);
+
+    let resumed = ingest::resume_pending(&state);
+    if resumed > 0 {
+        tracing::info!(resumed, "interrupted ingestions queued again");
+    }
+    watch::start(state.clone());
 
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     runtime.block_on(async {
@@ -211,4 +234,45 @@ async fn shutdown_signal() {
         () = terminate => {},
     }
     tracing::info!("shutting down");
+}
+
+#[cfg(test)]
+mod repro_full {
+    use super::*;
+
+    /// Regression: with LadybugDB's full-text index, the second ingestion creating mentions and
+    /// entity relations lost its Document row at commit. Needs the models (/models) and the
+    /// LadybugDB extensions: `cargo test -- --ignored` inside the dev container.
+    #[test]
+    #[ignore]
+    fn full_ingest_keeps_document() {
+        let mut config = Config::from_env();
+        config.data_dir = std::env::temp_dir().join(format!("innerrag-full-{}", uuid::Uuid::new_v4()));
+        config.models_dir = "/models".into();
+        config.threads = 4;
+        let state = Arc::new(load_state(config).unwrap());
+        let graph = state.projects.get("default").unwrap();
+        let count = || {
+            db::rows(&graph.reader().unwrap(), "MATCH (d:Document) RETURN collect(d.id)", vec![]).unwrap()[0][0].to_string()
+        };
+        for (id, text) in [("a", "Grace Hopper travaille à Arlington."), ("b", "Ada Lovelace vit à Londres."), ("c", "bonjour.")] {
+            let req = ingest::IngestRequest {
+                id: Some(id.into()),
+                title: id.into(),
+                text: text.into(),
+                source: None,
+                metadata: None,
+                tags: None,
+                status: None,
+                creator: None,
+                labels: None,
+                plain: false,
+                original: None,
+            };
+            ingest::ingest(&state, &graph, req, ingest::Mode::Create, None).unwrap();
+        }
+        assert_eq!(count(), "[a,b,c]");
+        // The keyword index follows the base.
+        assert_eq!(graph.search_keywords("Lovelace", 3)[0].0, "b#0");
+    }
 }

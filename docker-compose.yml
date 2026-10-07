@@ -12,6 +12,8 @@ services:
       - ./data:/data
       # A project shared through git can be mounted on its own, for example:
       # - ./mon-depot/.innerrag:/data/projects/mon-projet
+      # Folders a project can follow (Projets page > Dossier surveillé), read-only:
+      # - ./mon-depot/docs:/watch/mon-depot-docs:ro
     environment:
       INNERRAG_USER: ${INNERRAG_USER:-local}
       # INNERRAG_DEFAULT_STATUS: DRAFT

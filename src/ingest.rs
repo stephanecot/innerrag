@@ -9,7 +9,7 @@ use anyhow::Result;
 use lbug::{Connection, LogicalType};
 use serde::{Deserialize, Serialize};
 
-use crate::chunk::{chunk_document, chunk_plain};
+use crate::chunk::{chunk_document, chunk_plain, prose};
 use crate::db::{self, as_str, exec, rows, s, Graph, Structs};
 use crate::extract::{first_heading, front_matter};
 use crate::history::{count, Call};
@@ -74,6 +74,8 @@ pub fn submit(
     // The id is fixed now, so clients can follow the document before the job ends.
     let id = req.id.get_or_insert_with(|| uuid::Uuid::new_v4().to_string()).clone();
     let label = if label.is_empty() { req.title.clone() } else { label.to_string() };
+    // Kept on disk until done, so a restart resumes the queue instead of losing it.
+    let pending = persist(state, project, mode, channel, &label, &req)?;
     let st = state.clone();
     let project_id = project.to_string();
     let detail = label.clone();
@@ -82,8 +84,70 @@ pub fn submit(
         let call = Call::start(channel, &project_id, operation, detail);
         let outcome = ingest(&st, &graph, req, mode, Some(progress));
         call.finish(&st.history, &outcome, summary);
+        let _ = std::fs::remove_dir_all(&pending);
         outcome
     }))
+}
+
+#[derive(Serialize, Deserialize)]
+struct PendingJob {
+    project: String,
+    mode: Mode,
+    channel: String,
+    label: String,
+    original_name: Option<String>,
+    request: IngestRequest,
+}
+
+fn pending_root(state: &AppState) -> std::path::PathBuf {
+    state.config.data_dir.join("jobs")
+}
+
+fn persist(state: &AppState, project: &str, mode: Mode, channel: &str, label: &str, req: &IngestRequest) -> Result<std::path::PathBuf> {
+    let dir = pending_root(state).join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&dir)?;
+    if let Some(original) = &req.original {
+        std::fs::write(dir.join("original.bin"), &original.bytes)?;
+    }
+    let job = serde_json::json!({
+        "project": project,
+        "mode": mode,
+        "channel": channel,
+        "label": label,
+        "original_name": req.original.as_ref().map(|o| o.filename.clone()),
+        "request": req,
+    });
+    std::fs::write(dir.join("job.json"), serde_json::to_vec(&job)?)?;
+    Ok(dir)
+}
+
+/// Queues again the ingestions a restart interrupted. Returns how many were resumed.
+pub fn resume_pending(state: &Arc<AppState>) -> usize {
+    let Ok(entries) = std::fs::read_dir(pending_root(state)) else { return 0 };
+    let mut resumed = 0;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let job: Option<PendingJob> = std::fs::read(dir.join("job.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let original = std::fs::read(dir.join("original.bin")).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+        let Some(mut job) = job else { continue };
+        if let (Some(filename), Some(bytes)) = (job.original_name.clone(), original) {
+            job.request.original = Some(Original { filename, bytes });
+        }
+        let channel = match job.channel.as_str() {
+            "mcp" => "mcp",
+            "ui" => "ui",
+            "watch" => "watch",
+            _ => "rest",
+        };
+        // A resumed creation may find its own document half-written by nobody: upsert is safe.
+        let mode = if job.mode == Mode::Create { Mode::Upsert } else { job.mode };
+        match submit(state, &job.project, job.request, mode, channel, &job.label) {
+            Ok(_) => resumed += 1,
+            Err(e) => tracing::warn!(project = %job.project, "cannot resume ingestion of {}: {e:#}", job.label),
+        }
+    }
+    resumed
 }
 
 /// Waits for a job to finish (polling), at most `timeout` when given.
@@ -122,7 +186,7 @@ impl Status {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
     /// Stable id; generated when absent.
     pub id: Option<String>,
@@ -140,11 +204,55 @@ pub struct IngestRequest {
     pub labels: Option<Vec<String>>,
     /// Plain text (PDF, legacy Office, .txt): `#` lines are not headings and there is no
     /// front matter. JSON requests are markdown.
-    #[serde(skip)]
+    #[serde(default)]
     pub plain: bool,
     /// The uploaded file, kept in the project's `files/` folder for reading as is.
     #[serde(skip)]
     pub original: Option<Original>,
+}
+
+/// What a client may set alongside an uploaded file (each overrides the file's own value).
+#[derive(Debug, Default)]
+pub struct FileFields {
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub source: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub status: Option<String>,
+    pub creator: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Extracts a file (PDF, Word, PowerPoint, Markdown…) into an ingestion request that keeps the
+/// original. Shared by uploads, the MCP `ingest_file` tool and watched folders.
+pub fn file_request(filename: &str, bytes: Vec<u8>, fields: FileFields) -> Result<IngestRequest> {
+    let (format, extracted) = crate::extract::extract(filename, &bytes)?;
+    let status = match fields.status.or(extracted.status) {
+        Some(s) => Some(Status::parse(&s)?),
+        None => None,
+    };
+    let stem = std::path::Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or("document").to_string();
+    let mut metadata = fields.metadata.filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    metadata["file"] = serde_json::json!({
+        "name": filename,
+        "format": format,
+        "format_label": format.label(),
+        "size": bytes.len(),
+        "pages": extracted.pages,
+    });
+    Ok(IngestRequest {
+        id: fields.id,
+        title: fields.title.or(extracted.title).unwrap_or(stem),
+        text: extracted.text,
+        source: fields.source.or_else(|| Some(filename.to_string())),
+        metadata: Some(metadata),
+        tags: fields.tags.or_else(|| (!extracted.tags.is_empty()).then_some(extracted.tags)),
+        status,
+        creator: fields.creator,
+        labels: None,
+        plain: !extracted.structured,
+        original: Some(Original { filename: filename.to_string(), bytes }),
+    })
 }
 
 pub struct Original {
@@ -179,7 +287,7 @@ pub fn stored_file(metadata: &str) -> Option<String> {
     value.get("file")?.get("stored")?.as_str().map(str::to_string)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
     /// Fails if the id already exists.
     Create,
@@ -198,7 +306,98 @@ pub struct IngestReport {
     pub entities: usize,
     pub new_entities: usize,
     pub relations: usize,
+    /// Passages unchanged since the previous version: their vectors and entities were reused.
+    pub reused: usize,
     pub millis: u128,
+}
+
+/// The current passages of a document: text → (vector, entities), to skip unchanged ones.
+fn previous_chunks(graph: &Graph, doc_id: &str) -> Result<HashMap<String, (Vec<f32>, Vec<Mention>)>> {
+    let conn = graph.reader()?;
+    let mut out: HashMap<String, (Vec<f32>, Vec<Mention>)> = HashMap::new();
+    let mut by_id: HashMap<String, String> = HashMap::new();
+    for r in rows(
+        &conn,
+        "MATCH (:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk) RETURN c.id, c.text, c.embedding",
+        vec![("id", s(doc_id))],
+    )? {
+        let text = as_str(&r[1]);
+        by_id.insert(as_str(&r[0]), text.clone());
+        out.insert(text, (db::as_floats(&r[2]), Vec::new()));
+    }
+    if out.is_empty() {
+        return Ok(out);
+    }
+    for r in rows(
+        &conn,
+        "MATCH (:Document {id: $id})-[:HAS_CHUNK]->(c:Chunk)-[m:MENTIONS]->(e:Entity)
+         RETURN c.id, e.id, e.name, e.label, m.score",
+        vec![("id", s(doc_id))],
+    )? {
+        if let Some(entry) = by_id.get(&as_str(&r[0])).and_then(|text| out.get_mut(text)) {
+            entry.1.push(Mention {
+                entity_id: as_str(&r[1]),
+                name: as_str(&r[2]),
+                label: as_str(&r[3]),
+                score: db::as_f64(&r[4]) as f32,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Entities already in the base, by lowercase name: (id, label) of the most mentioned one.
+fn existing_entities(graph: &Graph, mut names: Vec<String>) -> Result<HashMap<String, (String, String)>> {
+    names.sort_unstable();
+    names.dedup();
+    let conn = graph.reader()?;
+    let mut out = HashMap::new();
+    for r in rows(
+        &conn,
+        "MATCH (e:Entity) WHERE lower(e.name) IN $names
+         OPTIONAL MATCH (e)<-[m:MENTIONS]-(:Chunk)
+         RETURN lower(e.name), e.id, e.label, count(m) AS n ORDER BY n DESC",
+        vec![("names", db::strings(names))],
+    )? {
+        out.entry(as_str(&r[0])).or_insert((as_str(&r[1]), as_str(&r[2])));
+    }
+    Ok(out)
+}
+
+/// One entity per name. GLiNER may tag "Android" as product here and technology there: the
+/// entity already in the base wins, else the label the document gives it most often.
+fn canonicalize(mentions: &mut [Vec<Mention>], existing: &HashMap<String, (String, String)>) {
+    let mut votes: HashMap<String, HashMap<String, (usize, f32)>> = HashMap::new();
+    for m in mentions.iter().flatten() {
+        let v = votes.entry(m.name.to_lowercase()).or_default().entry(m.label.clone()).or_default();
+        v.0 += 1;
+        v.1 += m.score;
+    }
+    let chosen: HashMap<String, String> = votes
+        .into_iter()
+        .filter_map(|(name, labels)| {
+            let best = labels.into_iter().max_by(|a, b| a.1 .0.cmp(&b.1 .0).then(a.1 .1.total_cmp(&b.1 .1)))?;
+            Some((name, best.0))
+        })
+        .collect();
+    for chunk in mentions.iter_mut() {
+        let mut out: Vec<Mention> = Vec::with_capacity(chunk.len());
+        for mut m in chunk.drain(..) {
+            let lower = m.name.to_lowercase();
+            if let Some((id, label)) = existing.get(&lower) {
+                m.entity_id.clone_from(id);
+                m.label.clone_from(label);
+            } else if let Some(label) = chosen.get(&lower) {
+                m.label.clone_from(label);
+                m.entity_id = crate::ner::entity_id(label, &m.name);
+            }
+            match out.iter_mut().find(|o| o.entity_id == m.entity_id) {
+                Some(o) => o.score = o.score.max(m.score),
+                None => out.push(m),
+            }
+        }
+        *chunk = out;
+    }
 }
 
 pub fn normalize_tags(tags: &[String]) -> Vec<String> {
@@ -242,24 +441,61 @@ pub fn ingest(
     };
     let status = req.status.unwrap_or_else(|| default_status(state));
     let tags = normalize_tags(req.tags.as_deref().unwrap_or_default());
-    let labels = req.labels.filter(|l| !l.is_empty()).unwrap_or_else(|| state.config.ner_labels.clone());
+    let custom_labels = req.labels.as_ref().is_some_and(|l| !l.is_empty());
+    let labels = req.labels.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| state.config.ner_labels.clone());
 
     // CPU-heavy work happens before taking the writer lock.
     let (size, overlap) = (state.config.chunk_size, state.config.chunk_overlap);
     let pieces = if req.plain { chunk_plain(&req.text, size, overlap) } else { chunk_document(&req.text, size, overlap) };
     let chunks: Vec<String> = pieces.iter().map(|c| c.text.clone()).collect();
     let total = chunks.len();
-    let mut embeddings = Vec::with_capacity(total);
-    for batch in chunks.chunks(EMBED_STEP) {
-        report_progress(Stage::Embedding, embeddings.len(), total)?;
-        embeddings.extend(state.embedder.embed_passages(batch)?);
+    // Re-import: passages whose text did not change keep their vectors and entities.
+
+    let previous = if custom_labels { HashMap::new() } else { previous_chunks(graph, &doc_id)? };
+    let todo: Vec<usize> = (0..total).filter(|&i| !previous.contains_key(&chunks[i])).collect();
+    let reused = total - todo.len();
+    let todo_texts: Vec<String> = todo.iter().map(|&i| chunks[i].clone()).collect();
+    let mut new_embeddings = Vec::with_capacity(todo.len());
+    for batch in todo_texts.chunks(EMBED_STEP) {
+        report_progress(Stage::Embedding, reused + new_embeddings.len(), total)?;
+        new_embeddings.extend(state.embedder.embed_passages(batch)?);
     }
-    let mut mentions = Vec::with_capacity(total);
-    for batch in chunks.chunks(NER_STEP) {
-        report_progress(Stage::Entities, mentions.len(), total)?;
-        mentions.extend(state.ner.extract(batch, &labels)?);
+    let mut new_mentions = Vec::with_capacity(todo.len());
+    for batch in todo_texts.chunks(NER_STEP) {
+        report_progress(Stage::Entities, reused + new_mentions.len(), total)?;
+        let prose_batch: Vec<String> = batch.iter().map(|t| prose(t)).collect();
+        new_mentions.extend(state.ner.extract(&prose_batch, &labels)?);
+    }
+    let (mut embeddings, mut mentions) = (Vec::with_capacity(total), Vec::with_capacity(total));
+    let (mut new_embeddings, mut new_mentions) = (new_embeddings.into_iter(), new_mentions.into_iter());
+    for text in &chunks {
+        match previous.get(text) {
+            Some((emb, found)) => {
+                embeddings.push(emb.clone());
+                mentions.push(found.clone());
+            }
+            None => {
+                embeddings.push(new_embeddings.next().unwrap_or_default());
+                mentions.push(new_mentions.next().unwrap_or_default());
+            }
+        }
     }
     report_progress(Stage::Writing, 0, 1)?;
+    let names: Vec<String> = mentions.iter().flatten().map(|m| m.name.to_lowercase()).collect();
+    let known = existing_entities(graph, names)?;
+    canonicalize(&mut mentions, &known);
+    // Vectors of the entities that look new are computed now, outside the write transaction.
+    let mut unseen: Vec<(String, String)> = mentions
+        .iter()
+        .flatten()
+        .filter(|m| !known.contains_key(&m.name.to_lowercase()))
+        .map(|m| (m.entity_id.clone(), m.name.clone()))
+        .collect();
+    unseen.sort();
+    unseen.dedup_by(|a, b| a.0 == b.0);
+    let unseen_vectors = state.embedder.embed_queries(&unseen.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>())?;
+    let mut entity_vectors: HashMap<String, Vec<f32>> =
+        unseen.into_iter().map(|(id, _)| id).zip(unseen_vectors).collect();
 
     // Distinct entities of the document (first surface form wins) and co-occurrence pairs.
     let mut entities: BTreeMap<String, &Mention> = BTreeMap::new();
@@ -283,6 +519,7 @@ pub fn ingest(
         .as_ref()
         .filter(|_| state.config.keep_originals)
         .map(|o| stored_name(&doc_id, &o.filename));
+
     let conn = graph.writer()?;
     let report = db::transaction(&conn, |conn| {
         // Creator and creation date survive a replacement.
@@ -317,8 +554,15 @@ pub fn ingest(
         .collect();
         let new_entities: Vec<&Mention> =
             entities.values().filter(|m| !existing.contains(&m.entity_id)).copied().collect();
-        let names: Vec<String> = new_entities.iter().map(|m| m.name.clone()).collect();
-        let entity_embeddings = state.embedder.embed_queries(&names)?;
+        // Normally all computed before the transaction; a concurrent ingestion may have added some.
+        let missing: Vec<String> =
+            new_entities.iter().filter(|m| !entity_vectors.contains_key(&m.entity_id)).map(|m| m.name.clone()).collect();
+        if !missing.is_empty() {
+            let ids: Vec<String> = new_entities.iter().filter(|m| !entity_vectors.contains_key(&m.entity_id)).map(|m| m.entity_id.clone()).collect();
+            entity_vectors.extend(ids.into_iter().zip(state.embedder.embed_queries(&missing)?));
+        }
+        let entity_embeddings: Vec<Vec<f32>> =
+            new_entities.iter().map(|m| entity_vectors.get(&m.entity_id).cloned().unwrap_or_default()).collect();
 
         let mut metadata = req.metadata.clone().unwrap_or_else(|| serde_json::json!({}));
         if let (Some(file), true) = (stored.as_ref(), metadata.is_object()) {
@@ -347,6 +591,7 @@ pub fn ingest(
             ],
         )?;
 
+
         let dim = graph.dim();
         let mut chunk_rows = Structs::new(&[
             ("id", LogicalType::String),
@@ -373,6 +618,7 @@ pub fn ingest(
             ),
             vec![("doc", s(&doc_id)), ("rows", chunk_rows.into_value())],
         )?;
+
         if chunks.len() > 1 {
             exec(
                 conn,
@@ -403,6 +649,7 @@ pub fn ingest(
             )?;
         }
 
+
         let mut mention_rows = Structs::new(&[
             ("chunk", LogicalType::String),
             ("entity", LogicalType::String),
@@ -429,6 +676,7 @@ pub fn ingest(
             )?;
         }
 
+
         let mut pair_rows = Structs::new(&[
             ("a", LogicalType::String),
             ("b", LogicalType::String),
@@ -449,6 +697,7 @@ pub fn ingest(
             )?;
         }
 
+
         Ok(IngestReport {
             id: doc_id.clone(),
             title: title.clone(),
@@ -459,6 +708,7 @@ pub fn ingest(
             entities: entities.len(),
             new_entities: new_entities.len(),
             relations: pairs.len(),
+            reused,
             millis: 0,
         })
         .map(|report| (report, previous_file))
@@ -477,7 +727,9 @@ pub fn ingest(
         report
     })?;
     drop(conn);
+    graph.index_keywords(&doc_id, &chunks.iter().enumerate().map(|(i, text)| (chunk_id(i), text.clone())).collect::<Vec<_>>());
     graph.checkpoint()?;
+
 
     tracing::info!(
         doc = %report.id, chunks = report.chunks, entities = report.entities,
@@ -545,6 +797,7 @@ pub fn delete_document(graph: &Graph, doc_id: &str) -> Result<()> {
     if let Some(rel) = file {
         let _ = std::fs::remove_file(graph.files_dir().join(rel.trim_start_matches("files/")));
     }
+    graph.index_keywords(doc_id, &[]);
     graph.checkpoint()
 }
 
@@ -586,6 +839,26 @@ mod tests {
     fn tags_are_trimmed_and_deduplicated() {
         let tags = normalize_tags(&["  RH ".into(), "rh".into(), "".into(), "paie  mensuelle".into()]);
         assert_eq!(tags, vec!["RH", "paie mensuelle"]);
+    }
+
+    #[test]
+    fn labels_are_unified_per_name() {
+        let m = |name: &str, label: &str, score: f32| Mention {
+            entity_id: crate::ner::entity_id(label, name),
+            name: name.into(),
+            label: label.into(),
+            score,
+        };
+        let mut mentions = vec![
+            vec![m("Android", "product", 0.9), m("Java", "technology", 0.8)],
+            vec![m("Android", "technology", 0.7), m("android", "product", 0.6)],
+            vec![m("Google", "organization", 0.9)],
+        ];
+        let existing = HashMap::from([("google".to_string(), ("organization:google llc".to_string(), "organization".to_string()))]);
+        canonicalize(&mut mentions, &existing);
+        assert!(mentions.iter().flatten().filter(|x| x.name.eq_ignore_ascii_case("android")).all(|x| x.entity_id == "product:android"));
+        assert_eq!(mentions[1].len(), 1, "same entity twice in one chunk is merged");
+        assert_eq!(mentions[2][0].entity_id, "organization:google llc");
     }
 
     #[test]

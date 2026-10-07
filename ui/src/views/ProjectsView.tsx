@@ -11,6 +11,8 @@ export default function ProjectsView({
   const [description, setDescription] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [watching, setWatching] = useState<{ id: string; dir: string } | null>(null);
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -39,6 +41,7 @@ export default function ProjectsView({
           </div>
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
+        {notice && <div className="success" role="status">{notice}</div>}
 
         <ul className="project-list panel">
           {projects.map((p) =>
@@ -91,6 +94,39 @@ export default function ProjectsView({
                   <span className="muted" style={{ fontSize: 14 }}>
                     {p.id}, créé le {longDate(p.created_at)}{p.description ? `. ${p.description}` : ""}
                   </span>
+                  {watching?.id === p.id ? (
+                    <form
+                      style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        act(async () => {
+                          await api.updateProject(p.id, { watch_dir: watching.dir });
+                          setWatching(null);
+                          setNotice(watching.dir ? `${p.id} suit maintenant ${watching.dir} : les fichiers sont en cours d'import.` : `${p.id} ne suit plus de dossier.`);
+                        });
+                      }}
+                    >
+                      <label htmlFor={`watch-${p.id}`} className="sr-only">Dossier surveillé</label>
+                      <input
+                        id={`watch-${p.id}`}
+                        className="input"
+                        style={{ flex: "1 1 220px" }}
+                        placeholder="nom du dossier sous /watch, vide pour arrêter"
+                        value={watching.dir}
+                        autoFocus
+                        onChange={(e) => setWatching({ id: p.id, dir: e.target.value })}
+                      />
+                      <button type="submit" className="btn btn-primary" disabled={busy}>Enregistrer</button>
+                      <button type="button" className="btn" onClick={() => setWatching(null)}>Annuler</button>
+                    </form>
+                  ) : p.watch_dir ? (
+                    <span style={{ fontSize: 14 }}>
+                      Suit <span className="mono">/watch/{p.watch_dir}</span>
+                      {p.watch && `, ${p.watch.files} fichiers suivis`}
+                      {p.watch?.last_scan && `, dernier passage ${new Date(p.watch.last_scan * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
+                      {p.watch?.last_error && <span className="danger-text">. Erreur : {p.watch.last_error}</span>}
+                    </span>
+                  ) : null}
                 </div>
                 <span className="muted" style={{ fontSize: 14 }}>{bytes(p.size_bytes)} sur disque</span>
                 {p.id !== current && (
@@ -98,6 +134,24 @@ export default function ProjectsView({
                 )}
                 {renaming?.id !== p.id && (
                   <button type="button" className="btn" onClick={() => setRenaming({ id: p.id, title: p.title })}>Renommer</button>
+                )}
+                {watching?.id !== p.id && (
+                  <button type="button" className="btn" onClick={() => setWatching({ id: p.id, dir: p.watch_dir ?? "" })}>
+                    {p.watch_dir ? "Changer de dossier" : "Suivre un dossier"}
+                  </button>
+                )}
+                {p.watch_dir && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => act(async () => {
+                      const r = await api.scanWatch(p.id);
+                      setNotice(`${p.id} : ${r.added} ajoutés, ${r.changed} modifiés, ${r.removed} retirés, ${r.unchanged} inchangés${r.errors.length ? `, ${r.errors.length} erreurs` : ""}.`);
+                    })}
+                  >
+                    Analyser maintenant
+                  </button>
                 )}
                 <button type="button" className="btn btn-danger" onClick={() => setConfirming(p.id)}>Supprimer</button>
               </li>
@@ -152,6 +206,13 @@ export default function ProjectsView({
           <li><span className="mono">project.json</span> : titre, description et modèle d'embedding utilisé.</li>
           <li><span className="mono">.gitignore</span> : écarte les fichiers temporaires.</li>
         </ul>
+        <h3 style={{ marginTop: 6 }}>Suivre un dossier de documentation</h3>
+        <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
+          Montez un dossier sous <span className="mono">/watch</span> (par exemple le <span className="mono">docs/</span> d'un dépôt)
+          et associez-le à un projet : ses fichiers sont importés, puis tenus à jour toutes les 30 secondes. Seuls les passages
+          modifiés sont recalculés.
+        </p>
+        <pre className="code">{`-v ./mon-depot/docs:/watch/mon-depot-docs:ro`}</pre>
         <p className="note">La base est un fichier binaire : git ne sait pas fusionner deux modifications parallèles. Convenez de qui ingère à quel moment.</p>
       </aside>
     </div>

@@ -10,6 +10,8 @@ export interface Project {
   embedding_model: string;
   embedding_dim: number;
   size_bytes: number;
+  watch_dir?: string;
+  watch?: { files: number; last_scan: number | null; last_error: string | null };
 }
 
 export interface Stats {
@@ -135,7 +137,9 @@ export interface SearchResponse {
     similarity: number;
     graph_score: number | null;
     graph_boost: number;
+    keyword_boost: number;
     via_graph: boolean;
+    via_keywords: boolean;
     entities: string[];
   }[];
   entities: { id: string; name: string; label: string; score: number; via: "query" | "vector" | "neighbour" }[];
@@ -147,6 +151,44 @@ export interface SearchResponse {
   millis: number;
 }
 
+export interface EvalQuestion {
+  id: string;
+  question: string;
+  expect: { doc?: string; pages?: number[]; contains?: string[]; none?: boolean };
+}
+
+export interface EvalSet {
+  questions: EvalQuestion[];
+}
+
+export interface EvalSummary {
+  min_score: number;
+  questions: number;
+  hit_at_1: number;
+  hit_at_3: number;
+  hit_at_k: number;
+  mrr: number;
+  rejected_out_of_scope: number | null;
+  overall: number;
+  avg_millis: number;
+}
+
+export interface EvalReport {
+  k: number;
+  runs: EvalSummary[];
+  best: number;
+  results: {
+    id: string;
+    question: string;
+    expects_none: boolean;
+    rank: number | null;
+    correct: boolean;
+    returned: number;
+    best_similarity: number | null;
+    top: { doc_title: string; page: number | null; score: number; similarity: number; right: boolean }[];
+  }[];
+}
+
 export interface CypherResult {
   columns: string[];
   rows: unknown[][];
@@ -155,7 +197,7 @@ export interface CypherResult {
 
 export interface CallRecord {
   at: number;
-  channel: "mcp" | "rest" | "ui";
+  channel: "mcp" | "rest" | "ui" | "watch";
   project: string;
   operation: string;
   detail: string;
@@ -236,9 +278,14 @@ export const api = {
   projects: () => request<Project[]>("/api/projects"),
   createProject: (body: { id: string; title?: string; description?: string }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
-  updateProject: (id: string, body: { title?: string; description?: string }) =>
+  updateProject: (id: string, body: { title?: string; description?: string; watch_dir?: string }) =>
     request<Project>(`/api/projects/${enc(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: "DELETE" }),
+  scanWatch: (id: string) =>
+    request<{ added: number; changed: number; removed: number; unchanged: number; errors: string[] }>(
+      `/api/projects/${enc(id)}/watch/scan`,
+      { method: "POST" },
+    ),
 
   project: (p: string) => {
     const base = `/api/projects/${enc(p)}`;
@@ -272,8 +319,15 @@ export const api = {
         request<GraphView>(`${base}/graph${qs(f)}`),
       neighbourhood: (id: string, limit = 25) =>
         request<GraphView>(`${base}/graph/neighbourhood/${enc(id)}${qs({ limit })}`),
-      search: (body: { query: string; k?: number; use_graph?: boolean; include_drafts?: boolean; tags?: string[]; min_score?: number }) =>
+      search: (body: {
+        query: string; k?: number; use_graph?: boolean; use_keywords?: boolean;
+        include_drafts?: boolean; tags?: string[]; min_score?: number;
+      }) =>
         request<SearchResponse>(`${base}/search`, { method: "POST", body: JSON.stringify(body) }),
+      eval: () => request<EvalSet>(`${base}/eval`),
+      saveEval: (set: EvalSet) => request<EvalSet>(`${base}/eval`, { method: "PUT", body: JSON.stringify(set) }),
+      runEval: (body: { k?: number; min_scores?: number[] }) =>
+        request<EvalReport>(`${base}/eval/run`, { method: "POST", body: JSON.stringify(body) }),
       cypher: (query: string) =>
         request<CypherResult>(`${base}/cypher`, { method: "POST", body: JSON.stringify({ query }) }),
     };

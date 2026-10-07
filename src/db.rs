@@ -9,8 +9,14 @@ use serde_json::{json, Map, Value as Json};
 
 pub type Row = Vec<Value>;
 
+/// LadybugDB extensions: the vector index (k-NN). `fts` is only loaded to drop the full-text
+/// indexes of earlier versions (they triggered data loss, see `keywords.rs`).
+const EXTENSIONS: [&str; 2] = ["vector", "fts"];
+
 pub struct Graph {
     db: Database,
+    /// BM25 keyword index over the passages, in memory.
+    keywords: std::sync::RwLock<crate::keywords::KeywordIndex>,
     /// The project directory (holds the database and the `files/` of originals).
     dir: std::path::PathBuf,
     write_lock: Mutex<()>,
@@ -41,13 +47,19 @@ impl Graph {
             .max_num_threads(threads as u64);
         let db = Database::new(path, config).with_context(|| format!("opening {}", path.display()))?;
         // Extensions are loaded per database; every later connection sees them.
-        Connection::new(&db)?.query("LOAD vector;").context(
-            "loading the LadybugDB vector extension (run `innerrag install-extensions` once with network access)",
-        )?;
+        let conn = Connection::new(&db)?;
+        for ext in EXTENSIONS {
+            conn.query(&format!("LOAD {ext};")).with_context(|| {
+                format!("loading the LadybugDB {ext} extension (run `innerrag install-extensions` once with network access)")
+            })?;
+        }
+        drop(conn);
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let graph = Self { db, dir, write_lock: Mutex::new(()), dim };
+        let graph = Self { db, dir, keywords: Default::default(), write_lock: Mutex::new(()), dim };
         graph.init_schema()?;
+        graph.repair()?;
         graph.checkpoint()?;
+        graph.load_keywords()?;
         Ok(graph)
     }
 
@@ -55,7 +67,7 @@ impl Graph {
     pub fn install_extensions() -> Result<()> {
         let db = Database::in_memory(SystemConfig::default().buffer_pool_size(64 * 1024 * 1024))?;
         let conn = Connection::new(&db)?;
-        for ext in ["vector"] {
+        for ext in EXTENSIONS {
             conn.query(&format!("INSTALL {ext};"))?;
             conn.query(&format!("LOAD {ext};"))?;
             tracing::info!("extension {ext} installed");
@@ -89,6 +101,12 @@ impl Graph {
                 }
             }
         }
+        // Full-text indexes of an earlier version: their presence made commits lose Document rows.
+        for index in ["chunk_fts_en", "chunk_fts_fr"] {
+            if conn.query(&format!("CALL DROP_FTS_INDEX('Chunk', '{index}')")).is_ok() {
+                tracing::info!(index, "removed the LadybugDB full-text index (replaced by the in-memory keyword index)");
+            }
+        }
         for (table, index) in [("Chunk", "chunk_vec"), ("Entity", "entity_vec")] {
             let stmt = format!("CALL CREATE_VECTOR_INDEX('{table}', '{index}', 'embedding', metric := 'cosine')");
             if let Err(e) = conn.query(&stmt) {
@@ -102,6 +120,49 @@ impl Graph {
 
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// Cleans what the full-text index bug left behind: passages whose document vanished, and
+    /// entities no passage mentions any more.
+    fn repair(&self) -> Result<()> {
+        let conn = self.writer()?;
+        let orphans = rows(
+            &conn,
+            "MATCH (c:Chunk) WHERE NOT EXISTS { MATCH (d:Document) WHERE d.id = c.doc_id } RETURN count(c)",
+            vec![],
+        )?
+        .first()
+        .map_or(0, |r| as_i64(&r[0]));
+        if orphans > 0 {
+            tracing::warn!(orphans, dir = %self.dir.display(), "removing passages whose document was lost");
+            exec(&conn, "MATCH (c:Chunk) WHERE NOT EXISTS { MATCH (d:Document) WHERE d.id = c.doc_id } DETACH DELETE c", vec![])?;
+            exec(&conn, "MATCH (e:Entity) WHERE NOT EXISTS { MATCH (e)<-[:MENTIONS]-(:Chunk) } DETACH DELETE e", vec![])?;
+        }
+        Ok(())
+    }
+
+    fn load_keywords(&self) -> Result<()> {
+        let conn = self.reader()?;
+        let mut index = self.keywords.write().map_err(|_| anyhow!("keyword index lock poisoned"))?;
+        for r in rows(&conn, "MATCH (c:Chunk) RETURN c.id, c.text", vec![])? {
+            index.insert(&as_str(&r[0]), &as_str(&r[1]));
+        }
+        tracing::debug!(passages = index.len(), "keyword index built");
+        Ok(())
+    }
+
+    /// Replaces a document's passages in the keyword index.
+    pub fn index_keywords(&self, doc_id: &str, passages: &[(String, String)]) {
+        if let Ok(mut index) = self.keywords.write() {
+            index.remove_document(doc_id);
+            for (id, text) in passages {
+                index.insert(id, text);
+            }
+        }
+    }
+
+    pub fn search_keywords(&self, query: &str, top: usize) -> Vec<(String, f64)> {
+        self.keywords.read().map(|i| i.search(query, top)).unwrap_or_default()
     }
 
     /// Where original files are kept: `<project>/files/`.
@@ -250,6 +311,13 @@ pub fn as_f64(v: &Value) -> f64 {
     }
 }
 
+pub fn as_floats(v: &Value) -> Vec<f32> {
+    match v {
+        Value::List(_, items) | Value::Array(_, items) => items.iter().map(|x| as_f64(x) as f32).collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn as_strings(v: &Value) -> Vec<String> {
     match v {
         Value::List(_, items) | Value::Array(_, items) => {
@@ -306,3 +374,4 @@ pub fn to_json(v: &Value) -> Json {
         other => json!(other.to_string()),
     }
 }
+

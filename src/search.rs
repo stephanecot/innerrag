@@ -17,6 +17,9 @@ const MAX_NEIGHBOURS: i64 = 30;
 /// Largest bonus the graph adds to a passage's similarity (passages mentioning the
 /// most relevant entities get all of it).
 const GRAPH_BOOST: f64 = 0.05;
+/// Largest bonus for passages that contain the question's words (BM25, normalised per query).
+/// Keyword evidence may also bring a passage just under the threshold over it.
+const KEYWORD_BOOST: f64 = 0.04;
 
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
@@ -24,6 +27,10 @@ pub struct SearchRequest {
     pub k: Option<usize>,
     /// Disable graph expansion to compare with plain vector search.
     pub use_graph: Option<bool>,
+    /// Disable keyword (BM25) search.
+    pub use_keywords: Option<bool>,
+    /// Order the passages with the cross-encoder (default: when installed).
+    pub rerank: Option<bool>,
     /// Also search DRAFT documents (only PUBLISHED ones by default).
     pub include_drafts: Option<bool>,
     /// Restrict to documents carrying at least one of these tags.
@@ -54,8 +61,14 @@ pub struct ChunkHit {
     pub graph_score: Option<f64>,
     /// Part of `score` that comes from the graph (0 to 0.05).
     pub graph_boost: f64,
+    /// Part of `score` that comes from matching the question's words (0 to 0.04).
+    pub keyword_boost: f64,
     /// Found only thanks to the graph (not among the nearest passages by meaning).
     pub via_graph: bool,
+    /// Found only thanks to its words (keyword search).
+    pub via_keywords: bool,
+    /// Cross-encoder relevance (0–1) when reranking ran; the passages are then ordered by it.
+    pub rerank_score: Option<f64>,
     pub entities: Vec<String>,
 }
 
@@ -133,8 +146,8 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
     // 2. Seed entities: named in the question, or semantically close to it.
     let mut entities: HashMap<String, EntityHit> = HashMap::new();
     if use_graph {
-        let mentions = state.ner.extract(std::slice::from_ref(&query), &state.config.ner_labels)?;
-        let names: Vec<String> = mentions[0].iter().map(|m| m.name.to_lowercase()).collect();
+        let mentions = state.ner.extract_quick(&query, &state.config.ner_labels, std::time::Duration::from_millis(400));
+        let names: Vec<String> = mentions.iter().map(|m| m.name.to_lowercase()).collect();
         if !names.is_empty() {
             for r in rows(
                 &conn,
@@ -218,8 +231,8 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
             vec![
                 ("rows", weighted.into_value()),
                 ("limit", db::i((k * 2).max(10) as i64)),
-                ("drafts", drafts),
-                ("tags", tags),
+                ("drafts", drafts.clone()),
+                ("tags", tags.clone()),
             ],
         )?
         .iter()
@@ -227,13 +240,30 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         .collect();
     }
 
-    // 5. Every candidate (by meaning or through the graph) gets its similarity to the question,
-    //    then a small bonus when it mentions the question's entities.
+    // 4b. Keyword ranking (BM25 with English and French stems); documents are filtered below.
+    let keyword_scores: HashMap<String, f64> = if req.use_keywords.unwrap_or(true) {
+        graph.search_keywords(&query, (k * 4).clamp(20, 100)).into_iter().collect()
+    } else {
+        HashMap::new()
+    };
+    let max_keyword = keyword_scores.values().copied().fold(0.0, f64::max).max(f64::EPSILON);
+    let mut keyword_hits: Vec<(String, f64)> = keyword_scores.iter().map(|(id, s)| (id.clone(), *s)).collect();
+    keyword_hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+    keyword_hits.truncate((k * 2).max(10));
+
+    // 5. Every candidate (by meaning, through the graph or by its words) gets its similarity to
+    //    the question, then small bonuses for the question's entities and words.
     let vector_ids: std::collections::HashSet<&String> = vector_hits.iter().map(|(id, _)| id).collect();
     let graph_scores: HashMap<String, f64> = graph_hits.iter().cloned().collect();
     let max_graph = graph_hits.iter().map(|(_, s)| *s).fold(0.0, f64::max).max(f64::EPSILON);
     let mut candidates: Vec<String> = vector_hits.iter().map(|(id, _)| id.clone()).collect();
     candidates.extend(graph_hits.iter().map(|(id, _)| id.clone()).filter(|id| !vector_ids.contains(id)));
+    let graph_ids: std::collections::HashSet<String> = graph_hits.iter().map(|(id, _)| id.clone()).collect();
+    for (id, _) in &keyword_hits {
+        if !vector_ids.contains(id) && !graph_ids.contains(id) {
+            candidates.push(id.clone());
+        }
+    }
     let dim = state.embedder.dim();
     type Detail = (String, String, String, i64, String, Vec<String>, Option<i64>, f64);
     let details: HashMap<String, Detail> = rows(
@@ -241,11 +271,12 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         &format!(
             "UNWIND $ids AS id
              MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk {{id: id}})
+             WHERE {DOC_FILTER}
              OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
              RETURN c.id, d.id, d.title, d.status, c.idx, c.text, collect(e.name), c.page,
                     array_cosine_similarity(c.embedding, CAST($q AS FLOAT[{dim}]))"
         ),
-        vec![("ids", db::strings(candidates.clone())), ("q", db::floats(&qv))],
+        vec![("ids", db::strings(candidates.clone())), ("q", db::floats(&qv)), ("drafts", drafts.clone()), ("tags", tags.clone())],
     )?
     .iter()
     .map(|r| {
@@ -263,20 +294,35 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         .into_iter()
         .filter_map(|id| {
             let (doc_id, doc_title, doc_status, idx, text, entities, page, similarity) = details.get(&id)?.clone();
-            if similarity < min_score {
+            let keyword_boost = keyword_scores.get(&id).map_or(0.0, |s| KEYWORD_BOOST * s / max_keyword);
+            if similarity + keyword_boost < min_score {
                 below_threshold += 1;
                 return None;
             }
             let graph_score = graph_scores.get(&id).copied();
             let graph_boost = graph_score.map_or(0.0, |g| GRAPH_BOOST * g / max_graph);
-            let via_graph = !vector_ids.contains(&id);
+            let in_vector = vector_ids.contains(&id);
+            let via_graph = !in_vector && graph_ids.contains(&id);
+            let via_keywords = !in_vector && !via_graph;
             Some(ChunkHit {
                 id, doc_id, doc_title, doc_status, idx, page, text, entities,
-                score: similarity + graph_boost, similarity, graph_score, graph_boost, via_graph,
+                score: similarity + graph_boost + keyword_boost,
+                similarity, graph_score, graph_boost, keyword_boost, via_graph, via_keywords,
+                rerank_score: None,
             })
         })
         .collect();
     chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
+    // The cross-encoder re-reads the best candidates with the question and reorders them.
+    if let Some(reranker) = state.reranker.as_ref().filter(|_| req.rerank.unwrap_or(true)) {
+        chunks.truncate((k * 2).max(16));
+        let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+        let scores = reranker.score(&query, &texts)?;
+        for (c, s) in chunks.iter_mut().zip(scores) {
+            c.rerank_score = Some(s);
+        }
+        chunks.sort_by(|a, b| b.rerank_score.unwrap_or(0.0).total_cmp(&a.rerank_score.unwrap_or(0.0)));
+    }
     chunks.truncate(k);
 
     // 7. Relations among the selected entities.
@@ -357,7 +403,8 @@ fn build_context(chunks: &[ChunkHit], entities: &[EntityHit], relations: &[Relat
     out.push_str("## Passages\n");
     for (n, c) in chunks.iter().enumerate() {
         let location = c.page.map_or_else(|| format!("passage {}", c.idx + 1), |p| format!("page {p}"));
-        let _ = write!(out, "\n[{}] {} ({location}, score {:.2})\n{}\n", n + 1, c.doc_title, c.score, c.text);
+        let rerank = c.rerank_score.map(|r| format!(", rerank {r:.2}")).unwrap_or_default();
+        let _ = write!(out, "\n[{}] {} ({location}, score {:.2}{rerank})\n{}\n", n + 1, c.doc_title, c.score, c.text);
     }
     if chunks.is_empty() {
         out.push_str("\nNo relevant passage found.\n");

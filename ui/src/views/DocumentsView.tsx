@@ -73,6 +73,15 @@ export default function DocumentsView({
   // Documents being indexed show up in the list before they exist in the base.
   const pending = jobs.filter((j) => !j.finished_at && !docs.some((d) => d.id === j.document_id));
 
+  // Escape closes the side panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPanel({ kind: "none" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const selectedId = panel.kind === "doc" ? panel.id : null;
 
   return (

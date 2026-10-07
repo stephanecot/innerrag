@@ -21,6 +21,8 @@ pub struct Config {
     pub threads: usize,
     pub ner_labels: Vec<String>,
     pub ner_threshold: f32,
+    /// Extra words never kept as entities (added to the built-in list).
+    pub entity_stopwords: Vec<String>,
     pub chunk_size: usize,
     pub chunk_overlap: usize,
     /// `auto` (GPU when usable, else CPU), `cpu` or `cuda` (GPU required).
@@ -29,6 +31,12 @@ pub struct Config {
     pub keep_originals: bool,
     /// Largest accepted request (file uploads), in MB.
     pub max_upload_mb: usize,
+    /// Folders a project may follow must live under this root (mount them there).
+    pub watch_root: std::path::PathBuf,
+    /// Seconds between two passes over watched folders.
+    pub watch_interval_s: u64,
+    /// Rerank search results with the cross-encoder when it is installed.
+    pub rerank: bool,
     /// Minimum similarity (cosine, 0–1) for a passage to be returned by a search.
     pub min_score: f64,
     /// Maximum cosine distance for an entity to be used as a search seed.
@@ -74,10 +82,14 @@ impl Config {
                 "person,organization,location,event,product,technology",
             )),
             ner_threshold: var("INNERRAG_NER_THRESHOLD", 0.5),
+            entity_stopwords: parse_labels(&string("INNERRAG_ENTITY_STOPWORDS", "")),
             chunk_size: var("INNERRAG_CHUNK_SIZE", 1000),
             chunk_overlap: var("INNERRAG_CHUNK_OVERLAP", 150),
             entity_seed_distance: var("INNERRAG_ENTITY_SEED_DISTANCE", 0.18),
             min_score: var("INNERRAG_MIN_SCORE", 0.80),
+            rerank: var("INNERRAG_RERANK", true),
+            watch_root: string("INNERRAG_WATCH_ROOT", "/watch").into(),
+            watch_interval_s: var("INNERRAG_WATCH_INTERVAL", 30),
             max_upload_mb: var("INNERRAG_MAX_UPLOAD_MB", 200),
             keep_originals: var("INNERRAG_KEEP_ORIGINALS", true),
             device: string("INNERRAG_DEVICE", "auto").to_lowercase(),

@@ -14,6 +14,7 @@ export default function SearchView({ project }: { project: string }) {
   const [query, setQuery] = useState("");
   const [k, setK] = useState(8);
   const [useGraph, setUseGraph] = useState(true);
+  const [useKeywords, setUseKeywords] = useState(true);
   const [drafts, setDrafts] = useState(false);
   /** null: server default (INNERRAG_MIN_SCORE). */
   const [minScore, setMinScore] = useState<number | null>(null);
@@ -22,6 +23,18 @@ export default function SearchView({ project }: { project: string }) {
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [added, setAdded] = useState("");
+
+  /** Adds the current question to the project's reference set (Évaluation page). */
+  const addReference = async (expect: { doc?: string; pages?: number[]; contains?: string[]; none?: boolean }) => {
+    try {
+      const set = await p.eval();
+      await p.saveEval({ questions: [...set.questions, { id: "", question: query.trim(), expect }] });
+      setAdded(expect.none ? "Question ajoutée au jeu de référence comme hors sujet." : "Question ajoutée au jeu de référence avec cette réponse.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     p.tags().then(setTags).catch(() => setTags([]));
@@ -35,7 +48,7 @@ export default function SearchView({ project }: { project: string }) {
     try {
       setResult(
         await p.search({
-          query, k, use_graph: useGraph, include_drafts: drafts, tags: tag ? [tag] : [],
+          query, k, use_graph: useGraph, use_keywords: useKeywords, include_drafts: drafts, tags: tag ? [tag] : [],
           min_score: threshold ?? undefined,
         }),
       );
@@ -67,6 +80,10 @@ export default function SearchView({ project }: { project: string }) {
             <input type="checkbox" checked={useGraph} onChange={(e) => setUseGraph(e.target.checked)} />
             S'appuyer sur le graphe
           </label>
+          <label className="field-box" title="Recherche par mots exacts (BM25), utile pour les noms techniques et les codes">
+            <input type="checkbox" checked={useKeywords} onChange={(e) => setUseKeywords(e.target.checked)} />
+            Mots-clés
+          </label>
           <label className="field-box">
             <input type="checkbox" checked={drafts} onChange={(e) => setDrafts(e.target.checked)} />
             Inclure les brouillons
@@ -95,6 +112,7 @@ export default function SearchView({ project }: { project: string }) {
       </form>
 
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {added && <div className="success" role="status">{added} <a href={href("evaluation")}>Voir l'évaluation</a></div>}
 
       {result && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
@@ -107,6 +125,9 @@ export default function SearchView({ project }: { project: string }) {
                       Aucun passage n'est assez pertinent : le meilleur atteint {fr2(result.best_similarity)}, sous le seuil de {fr2(result.min_score)}.
                       La base ne couvre probablement pas cette question.
                     </p>
+                    <button type="button" className="btn" onClick={() => addReference({ none: true })}>
+                      C'est normal : ajouter comme question hors sujet
+                    </button>
                     {result.min_score > 0.7 && (
                       <button type="button" className="btn" onClick={() => { setMinScore(0.7); run(undefined, 0.7); }}>
                         Chercher quand même avec un seuil de 0,70
@@ -139,6 +160,11 @@ export default function SearchView({ project }: { project: string }) {
                       <span className={`score score-${relevance(c.similarity).tone}`} title="Similarité cosinus entre la question et le passage (0 à 1)">
                         Pertinence {fr2(c.similarity)}, {relevance(c.similarity).label}
                       </span>
+                      {c.keyword_boost > 0.001 && (
+                        <span className="score score-keyword" title="Bonus pour les mots de la question présents dans le passage (jusqu'à +0,04)">
+                          mots-clés +{fr2(c.keyword_boost)}
+                        </span>
+                      )}
                       {c.graph_boost > 0.001 && (
                         <span className="score score-graph" title="Bonus apporté par les entités de la question (jusqu'à +0,05)">
                           graphe +{fr2(c.graph_boost)}
@@ -151,6 +177,25 @@ export default function SearchView({ project }: { project: string }) {
                       part.hit ? <mark key={j}>{part.text}</mark> : <span key={j}>{part.text}</span>,
                     )}
                   </p>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ minHeight: 36 }}
+                      onClick={() =>
+                        addReference(
+                          c.page
+                            ? { doc: c.doc_id, pages: [c.page] }
+                            : { doc: c.doc_id, contains: [c.text.split("\n").slice(-1)[0].slice(0, 60)] },
+                        )
+                      }
+                    >
+                      Bonne réponse
+                    </button>
+                  </div>
+                  {c.via_keywords && (
+                    <p className="graph-found" style={{ color: "var(--c-event)" }}>Trouvé grâce à ses mots : la recherche par le sens seul ne l'aurait pas remonté.</p>
+                  )}
                   {c.via_graph && (
                     <p className="graph-found">Trouvé grâce au graphe : la recherche par le sens seul ne l'aurait pas remonté.</p>
                   )}

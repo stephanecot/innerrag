@@ -124,6 +124,24 @@ pub fn chunk_document(text: &str, size: usize, overlap: usize) -> Vec<Chunk> {
     chunks
 }
 
+/// The text of a passage without its fenced code blocks: entity extraction on code is slow
+/// and only finds noise (variable names tagged as people or places).
+pub fn prose(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Plain text: no headings; form feeds (pdftotext) separate pages.
 pub fn chunk_plain(text: &str, size: usize, overlap: usize) -> Vec<Chunk> {
     let pages: Vec<&str> = text.split('\u{c}').collect();

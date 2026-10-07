@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::db::Graph;
 use crate::history::{count, Call, HistoryFilter, HistoryView};
-use crate::ingest::{DocumentPatch, IngestRequest, Mode, Status};
+use crate::ingest::{DocumentPatch, IngestRequest, Mode};
 use crate::jobs::{Job, Stage};
 use crate::search::SearchRequest;
 use crate::{explore, extract, ingest, mcp, projects, search, AppState, Conflict, Invalid, NotFound};
@@ -98,6 +98,7 @@ pub fn router(state: Shared) -> Router {
     let ui_dir = state.config.ui_dir.clone();
     let project = Router::new()
         .route("/", get(get_project).patch(update_project).delete(delete_project))
+        .route("/watch/scan", post(scan_watch))
         .route("/stats", get(stats))
         .route("/documents", get(list_documents).post(create_document))
         .route("/documents/upload", post(upload_document))
@@ -115,6 +116,8 @@ pub fn router(state: Shared) -> Router {
         .route("/graph", get(graph))
         .route("/graph/neighbourhood/{id}", get(neighbourhood))
         .route("/search", post(search_handler))
+        .route("/eval", get(get_eval).put(put_eval))
+        .route("/eval/run", post(run_eval))
         .route("/cypher", post(cypher));
     let api = Router::new()
         .route("/config", get(config))
@@ -168,6 +171,7 @@ async fn config(State(state): State<Shared>) -> Json<serde_json::Value> {
         "models": state.models,
         "data_dir": c.data_dir,
         "lbug_version": lbug::VERSION,
+        "watch_root": c.watch_root,
     }))
 }
 
@@ -182,6 +186,8 @@ struct ProjectBody {
     id: Option<String>,
     title: Option<String>,
     description: Option<String>,
+    /// Folder under the watch root to keep in sync; "" stops following.
+    watch_dir: Option<String>,
 }
 
 async fn list_projects(State(state): State<Shared>) -> ApiResult<Vec<projects::ProjectInfo>> {
@@ -206,7 +212,24 @@ async fn update_project(
     Path(project): Path<String>,
     Json(body): Json<ProjectBody>,
 ) -> ApiResult<projects::ProjectInfo> {
-    Ok(Json(blocking(&state, move |s| s.projects.update(&project, body.title, body.description)).await?))
+    Ok(Json(
+        blocking(&state, move |s| {
+            if let Some(dir) = body.watch_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+                crate::watch::resolve(&s.config.watch_root, dir.trim())?;
+            }
+            let info = s.projects.update(&project, body.title, body.description, body.watch_dir)?;
+            if info.meta.watch_dir.is_some() {
+                crate::watch::scan(s, &project)?;
+                return s.projects.info(&project);
+            }
+            Ok(info)
+        })
+        .await?,
+    ))
+}
+
+async fn scan_watch(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::watch::ScanReport> {
+    Ok(Json(blocking(&state, move |s| crate::watch::scan(s, &project)).await?))
 }
 
 async fn delete_project(State(state): State<Shared>, Path(project): Path<String>) -> Result<StatusCode, ApiError> {
@@ -301,46 +324,21 @@ async fn read_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
 
 /// Extracts the file and builds the ingestion request (form fields win over file metadata).
 fn upload_request(upload: Upload, id: Option<String>) -> anyhow::Result<(IngestRequest, String)> {
-    let (format, extracted) = extract::extract(&upload.filename, &upload.bytes)?;
     let field = |k: &str| upload.fields.get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    let tags = field("tags").map(|raw| {
-        serde_json::from_str::<Vec<String>>(&raw)
-            .unwrap_or_else(|_| raw.split(',').map(|t| t.trim().to_string()).collect())
-    });
-    let status = match field("status").or(extracted.status) {
-        Some(s) => Some(Status::parse(&s)?),
-        None => None,
-    };
-    let stem = std::path::Path::new(&upload.filename)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("document")
-        .to_string();
-    let mut metadata = field("metadata")
-        .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
-        .filter(serde_json::Value::is_object)
-        .unwrap_or_else(|| json!({}));
-    metadata["file"] = json!({
-        "name": upload.filename,
-        "format": format,
-        "format_label": format.label(),
-        "size": upload.bytes.len(),
-        "pages": extracted.pages,
-    });
-    let req = IngestRequest {
+    let fields = ingest::FileFields {
         id: id.or_else(|| field("id")),
-        title: field("title").or(extracted.title).unwrap_or(stem),
-        text: extracted.text,
-        source: field("source").or_else(|| Some(upload.filename.clone())),
-        metadata: Some(metadata),
-        tags: tags.or_else(|| (!extracted.tags.is_empty()).then_some(extracted.tags)),
-        status,
+        title: field("title"),
+        source: field("source"),
+        tags: field("tags").map(|raw| {
+            serde_json::from_str::<Vec<String>>(&raw)
+                .unwrap_or_else(|_| raw.split(',').map(|t| t.trim().to_string()).collect())
+        }),
+        status: field("status"),
         creator: field("creator"),
-        labels: None,
-        plain: !extracted.structured,
-        original: Some(ingest::Original { filename: upload.filename.clone(), bytes: upload.bytes }),
+        metadata: field("metadata").and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok()),
     };
-    Ok((req, upload.filename))
+    let filename = upload.filename.clone();
+    Ok((ingest::file_request(&upload.filename, upload.bytes, fields)?, filename))
 }
 
 async fn upload_document(
@@ -605,6 +603,26 @@ async fn search_handler(
         })
         .await?,
     ))
+}
+
+async fn get_eval(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::eval::EvalSet> {
+    Ok(Json(in_project(&state, project, |_, g| crate::eval::load(g)).await?))
+}
+
+async fn put_eval(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Json(set): Json<crate::eval::EvalSet>,
+) -> ApiResult<crate::eval::EvalSet> {
+    Ok(Json(in_project(&state, project, move |_, g| crate::eval::save(g, set)).await?))
+}
+
+async fn run_eval(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Json(req): Json<crate::eval::RunRequest>,
+) -> ApiResult<crate::eval::Report> {
+    Ok(Json(in_project(&state, project, move |s, g| crate::eval::run(s, g, req)).await?))
 }
 
 #[derive(Deserialize)]

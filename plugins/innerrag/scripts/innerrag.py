@@ -273,6 +273,21 @@ def cmd_cypher(args):
     out(call("POST", p(args, "/cypher"), {"query": query}))
 
 
+def cmd_eval(args):
+    """Runs the project's reference questions (eval.json) and prints the metrics."""
+    thresholds = [float(t) for t in args.sweep.split(",")] if args.sweep else []
+    rep = call("POST", p(args, "/eval/run"), {"k": args.k, "min_scores": thresholds})
+    for i, r in enumerate(rep["runs"]):
+        best = " <- best" if i == rep["best"] and len(rep["runs"]) > 1 else ""
+        rejected = "-" if r["rejected_out_of_scope"] is None else f"{r['rejected_out_of_scope']:.0%}"
+        print(
+            f"seuil {r['min_score']:.2f}: hit@1 {r['hit_at_1']:.0%}  hit@3 {r['hit_at_3']:.0%}  hit@{rep['k']} {r['hit_at_k']:.0%}"
+            f"  MRR {r['mrr']:.2f}  hors sujet rejetées {rejected}  global {r['overall']:.0%}  ({r['avg_millis']:.0f} ms){best}",
+            file=sys.stderr,
+        )
+    out(rep)
+
+
 def cmd_history(args):
     res = call("GET", "/api/history", query={
         "hours": args.hours, "channel": args.channel, "operation": args.operation,
@@ -356,6 +371,11 @@ def main():
     s = sub.add_parser("cypher", help="read-only Cypher query ('-' reads stdin)")
     s.add_argument("query")
     s.set_defaults(fn=cmd_cypher)
+
+    s = sub.add_parser("eval", help="run the reference questions (eval.json) and print retrieval metrics")
+    s.add_argument("-k", type=int, default=8)
+    s.add_argument("--sweep", help="comma-separated thresholds to compare, e.g. 0.75,0.78,0.8,0.82,0.85")
+    s.set_defaults(fn=cmd_eval)
 
     s = sub.add_parser("history", help="call history and context consumption")
     s.add_argument("--hours", type=int, default=24)

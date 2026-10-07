@@ -162,6 +162,15 @@ export default function MapView({ project, params }: { project: string; params: 
     };
   }, [p, selected]);
 
+  // Escape closes the side panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Frame the whole graph once the layout settles (and again after a resize or reload).
   const fit = useCallback(() => {
     fg.current?.zoomToFit(500, 90);

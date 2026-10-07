@@ -113,7 +113,7 @@ export const OPERATION_LABEL: Record<string, string> = {
   stats: "Statistiques",
 };
 
-export const CHANNEL_LABEL: Record<string, string> = { mcp: "MCP", rest: "REST", ui: "Interface" };
+export const CHANNEL_LABEL: Record<string, string> = { mcp: "MCP", rest: "REST", ui: "Interface", watch: "Dossier" };
 
 /** Highlights each occurrence of `terms` in `text` with <mark>. */
 export function splitHighlights(text: string, terms: string[]): { text: string; hit: boolean }[] {

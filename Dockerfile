@@ -7,6 +7,9 @@ ARG EMBED_REPO=Xenova/multilingual-e5-small
 ARG EMBED_FILE=onnx/model_quantized.onnx
 ARG NER_REPO=onnx-community/gliner_multi-v2.1
 ARG NER_FILE=onnx/model_fp16.onnx
+# Cross-encoder reranker (multilingual, Apache-2.0); empty RERANK_REPO skips it.
+ARG RERANK_REPO=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+ARG RERANK_FILE=onnx/model.onnx
 # ONNX Runtime version expected by ort 2.0.0-rc.9
 ARG ORT_VERSION=1.20.1
 # CUDA libraries for the GPU image (ONNX Runtime 1.20 GPU: CUDA 12.x + cuDNN 9)
@@ -22,7 +25,7 @@ RUN npm run build
 
 # ---- Models and ONNX Runtime ------------------------------------------------
 FROM debian:trixie-slim AS models
-ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE ORT_VERSION TARGETARCH
+ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE RERANK_REPO RERANK_FILE ORT_VERSION TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /models
@@ -33,7 +36,12 @@ RUN set -eux; \
     hf "$EMBED_REPO" tokenizer.json embed/tokenizer.json; \
     hf "$NER_REPO" "$NER_FILE" ner/model.onnx; \
     hf "$NER_REPO" tokenizer.json ner/tokenizer.json; \
-    hf "$NER_REPO" gliner_config.json ner/gliner_config.json
+    hf "$NER_REPO" gliner_config.json ner/gliner_config.json; \
+    if [ -n "$RERANK_REPO" ]; then \
+        mkdir -p rerank; \
+        hf "$RERANK_REPO" "$RERANK_FILE" rerank/model.onnx; \
+        hf "$RERANK_REPO" tokenizer.json rerank/tokenizer.json; \
+    fi
 RUN set -eux; \
     case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=aarch64 ;; *) echo "unsupported $TARGETARCH"; exit 1 ;; esac; \
     curl -fsSL --retry 3 "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${arch}-${ORT_VERSION}.tgz" | tar xz -C /tmp; \
@@ -69,13 +77,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ---- Runtime ----------------------------------------------------------------
 FROM debian:trixie-slim AS runtime
-ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE
+ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE RERANK_REPO RERANK_FILE
 # poppler-utils (pdftotext) and catdoc (.doc/.ppt) extract text from uploaded files.
 RUN apt-get update && apt-get install -y --no-install-recommends libssl3t64 ca-certificates libatomic1 libgomp1 curl \
         poppler-utils catdoc \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app \
-    && mkdir -p /data/projects && chown -R app:app /data && chmod -R a+rwX /data
+    && mkdir -p /data/projects /watch && chown -R app:app /data && chmod -R a+rwX /data
 COPY --from=models /ort/libonnxruntime.so /usr/local/lib/libonnxruntime.so
 COPY --from=models /models /models
 COPY --from=builder /usr/local/bin/innerrag /usr/local/bin/innerrag
@@ -87,7 +95,8 @@ ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so \
     INNERRAG_MODELS=/models \
     INNERRAG_UI=/app/ui \
     INNERRAG_EMBED_MODEL="${EMBED_REPO}/${EMBED_FILE}" \
-    INNERRAG_NER_MODEL="${NER_REPO}/${NER_FILE}"
+    INNERRAG_NER_MODEL="${NER_REPO}/${NER_FILE}" \
+    INNERRAG_RERANK_MODEL="${RERANK_REPO}"
 USER app
 # Fetch the LadybugDB vector extension into /home/app/.lbdb now, so runtime needs no network.
 # Readable by any uid, so the container can run as the host user (--user) on mounted folders.

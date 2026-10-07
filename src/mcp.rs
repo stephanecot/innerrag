@@ -16,7 +16,7 @@ use crate::history::{count, Call};
 use crate::ingest::{IngestRequest, Mode, Status};
 use crate::jobs::{Job, Stage};
 use crate::search::SearchRequest;
-use crate::{explore, extract, ingest, search, AppState, Invalid};
+use crate::{explore, ingest, search, AppState, Invalid};
 use base64::Engine as _;
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -317,33 +317,17 @@ fn call_tool(state: &Shared, project: &str, name: &str, args: &Value) -> anyhow:
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(arg_str(args, "content_base64")?.trim())
                 .map_err(|e| Invalid(format!("content_base64 is not valid base64: {e}")))?;
-            let (format, extracted) = extract::extract(&filename, &bytes)?;
-            let status = match args.get("status").and_then(Value::as_str).map(str::to_string).or(extracted.status) {
-                Some(s) => Some(Status::parse(&s)?),
-                None => None,
-            };
-            let stem = std::path::Path::new(&filename).file_stem().and_then(|s| s.to_str()).unwrap_or("document");
-            let req = IngestRequest {
-                id: args.get("id").and_then(Value::as_str).map(str::to_string),
-                title: args
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or(extracted.title)
-                    .unwrap_or_else(|| stem.to_string()),
-                text: extracted.text,
-                source: Some(filename.clone()),
-                metadata: Some(json!({ "file": {
-                    "name": filename, "format": format, "format_label": format.label(),
-                    "size": bytes.len(), "pages": extracted.pages,
-                }})),
-                tags: arg_strings(args, "tags").or((!extracted.tags.is_empty()).then_some(extracted.tags)),
-                status,
-                creator: None,
-                labels: None,
-                plain: !extracted.structured,
-                original: Some(ingest::Original { filename: filename.clone(), bytes }),
-            };
+            let req = ingest::file_request(
+                &filename,
+                bytes,
+                ingest::FileFields {
+                    id: args.get("id").and_then(Value::as_str).map(str::to_string),
+                    title: args.get("title").and_then(Value::as_str).map(str::to_string),
+                    tags: arg_strings(args, "tags"),
+                    status: args.get("status").and_then(Value::as_str).map(str::to_string),
+                    ..Default::default()
+                },
+            )?;
             return queue(state, project, req, &filename, wait);
         }
         "ingestion_status" => {
@@ -408,6 +392,8 @@ fn run_tool(
                 query: arg_str(args, "query")?,
                 k: args.get("k").and_then(Value::as_u64).map(|k| k as usize),
                 use_graph: None,
+                use_keywords: None,
+                rerank: None,
                 include_drafts: args.get("include_drafts").and_then(Value::as_bool),
                 tags: arg_strings(args, "tags"),
                 min_score: args.get("min_score").and_then(Value::as_f64),
