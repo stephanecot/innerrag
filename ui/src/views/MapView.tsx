@@ -3,7 +3,7 @@ import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject 
 import { api, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
 import { href } from "../App";
 import { CloseIcon, SearchIcon } from "../Icons";
-import { cssVar, labelColor, labelName, labelVar, num, plural, splitHighlights, STATUS_LABEL, strengthLabel, withAlpha } from "../util";
+import { cssVar, labelColor, labelName, labelVar, num, plural, splitHighlights, STATUS_LABEL, STRENGTH_FULL, STRENGTH_RAMP, strengthColor, strengthLabel, fr2 } from "../util";
 
 interface NodeData {
   id: string;
@@ -374,19 +374,16 @@ export default function MapView({ project, params }: { project: string; params: 
             }}
             // Thickness follows the link's strength (specificity), not its raw count.
             linkWidth={(l) => linkWidth(l)}
-            // Each link blends the colors of its two ends; strong links are more opaque.
+            // Color and thickness both show the link's strength: grey-blue (weak) to amber to red (strong).
             linkCanvasObjectMode={() => "replace"}
             linkCanvasObject={(l, ctx, scale) => {
               const s = l.source as GNode;
               const t = l.target as GNode;
               if (s?.x === undefined || s.y === undefined || t?.x === undefined || t.y === undefined) return;
               const touches = selected !== null && (String(s.id) === selected || String(t.id) === selected);
-              const force = Math.sqrt(l.strength ?? l.weight / maxWeight);
-              const alpha = selected === null ? 0.3 + 0.55 * force : touches ? 0.9 : 0.07;
-              const gradient = ctx.createLinearGradient(s.x, s.y, t.x, t.y);
-              gradient.addColorStop(0, withAlpha(colors.label(s.label), alpha));
-              gradient.addColorStop(1, withAlpha(colors.label(t.label), alpha));
-              ctx.strokeStyle = gradient;
+              const strength = l.strength ?? l.weight / maxWeight;
+              const alpha = selected === null ? 0.45 + 0.45 * Math.min(1, Math.sqrt(strength / STRENGTH_FULL)) : touches ? 0.95 : 0.07;
+              ctx.strokeStyle = strengthColor(strength, alpha);
               ctx.lineWidth = linkWidth(l) / scale;
               ctx.lineCap = "round";
               ctx.beginPath();
@@ -511,6 +508,16 @@ export default function MapView({ project, params }: { project: string; params: 
               <li className="legend-draft"><span className="dot draft" />Cité seulement dans des brouillons</li>
             </ul>
           )}
+          <figure className="legend-strength" aria-label="Couleur des liens selon leur force">
+            <figcaption>Force des liens</figcaption>
+            <span className="legend-ramp" style={{ background: `linear-gradient(to right, ${STRENGTH_RAMP.join(", ")})` }} />
+            <span className="legend-ramp-labels">
+              <span>faible</span>
+              <span>{fr2(STRENGTH_FULL / 4)}</span>
+              <span>{fr2(STRENGTH_FULL)} et plus</span>
+            </span>
+            <span className="muted">Part des passages qui citent les deux entités ensemble.</span>
+          </figure>
           {autoWeight && minWeight === autoWeight && (
             <p className="muted" style={{ fontSize: 13 }}>
               Graphe dense : liens de moins de {autoWeight} passages en commun masqués.{" "}

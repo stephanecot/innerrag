@@ -130,3 +130,19 @@ export function splitHighlights(text: string, terms: string[]): { text: string; 
 
 /** A link strength: a tiny but non-zero value reads "< 0,01" rather than a misleading 0. */
 export const strengthLabel = (n: number) => (n > 0 && n < 0.005 ? "< 0,01" : fr2(n));
+
+/** Link colors from weak to strong (Jaccard strength, saturating at STRENGTH_FULL). */
+export const STRENGTH_RAMP = ["#9fb3bd", "#e3a33b", "#b42318"];
+export const STRENGTH_FULL = 0.3;
+
+/** Color of a link strength, interpolated along STRENGTH_RAMP on a square-root scale. */
+export function strengthColor(strength: number, alpha = 1): string {
+  const t = Math.min(1, Math.sqrt(Math.max(0, strength) / STRENGTH_FULL));
+  const seg = t < 0.5 ? 0 : 1;
+  const local = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5;
+  const parse = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const a = parse(STRENGTH_RAMP[seg]);
+  const b = parse(STRENGTH_RAMP[seg + 1]);
+  const [r, g, bl] = a.map((v, i) => Math.round(v + (b[i] - v) * local));
+  return `rgba(${r}, ${g}, ${bl}, ${alpha})`;
+}
