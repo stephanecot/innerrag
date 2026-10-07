@@ -188,7 +188,10 @@ fn tools(with_project_arg: bool) -> Value {
             "description": "Code elements the documentation names (between backticks: symbols, file paths, routes, environment variables, CLI flags) that no longer exist in the project's repository, with the passages that name them. Use it to find outdated documentation.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum elements listed (default 40)." } }
+                "properties": {
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum elements listed (default 40)." },
+                    "doc": { "type": "string", "description": "Only this document (id from list_documents): useful when the project also holds documents unrelated to the code." }
+                }
             },
             "annotations": { "readOnlyHint": true }
         },
@@ -520,7 +523,8 @@ fn run_tool(
         }
         "doc_drift" => {
             let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(40).clamp(1, 200) as usize;
-            let d = crate::code::drift(state, project, graph)?;
+            let doc = args.get("doc").and_then(Value::as_str).filter(|d| !d.is_empty());
+            let d = crate::code::drift(state, project, graph, doc)?;
             *result_line = count(d.missing.len(), "élément absent", "éléments absents");
             let mut out = format!(
                 "Code folder {} ({} files). The documentation names {} code elements; {} exist, {} are missing from the code.\n\n",
@@ -557,7 +561,7 @@ fn run_tool(
         }
         "explore_entity" => {
             let name = arg_str(args, "name")?;
-            let Some(e) = explore::find_entity(graph, &name)?.map(|id| explore::get_entity(graph, &id)).transpose()?.flatten()
+            let Some(e) = explore::find_entity(graph, &name)?.map(|id| explore::get_entity(graph, &id, None)).transpose()?.flatten()
             else {
                 *result_line = "aucune entité".into();
                 return Ok(format!("No entity matches \"{name}\"."));

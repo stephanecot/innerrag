@@ -343,6 +343,13 @@ pub fn as_floats(v: &Value) -> Vec<f32> {
     }
 }
 
+pub fn as_i64s(v: &Value) -> Vec<i64> {
+    match v {
+        Value::List(_, items) | Value::Array(_, items) => items.iter().map(as_i64).collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn as_strings(v: &Value) -> Vec<String> {
     match v {
         Value::List(_, items) | Value::Array(_, items) => {

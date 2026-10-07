@@ -23,6 +23,8 @@ const CODE_EXTENSIONS: &[&str] = &[
     "cc", "cpp", "hpp", "scala", "sql", "sh", "ps1", "toml", "yml", "yaml", "json", "gradle", "xml", "vue", "svelte",
     "dockerfile",
 ];
+/// Extensions of one same script module (a doc's `App.js` may now be `App.tsx`).
+const SCRIPT_EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", "dist", "build", "out", "vendor", ".venv", "venv", "__pycache__", ".next", ".idea",
     ".gradle", "coverage",
@@ -37,6 +39,8 @@ pub struct CodeIndex {
     pub root: PathBuf,
     pub files: Vec<String>,
     identifiers: HashSet<String>,
+    /// In how many files each identifier appears (tells distinctive names from common ones).
+    identifier_files: HashMap<String, u32>,
     flags: HashSet<String>,
     /// String literals that look like routes ("/api/...").
     routes: HashSet<String>,
@@ -89,7 +93,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
                     walk(&path, out);
                 }
             }
-            Ok(t) if t.is_file() && is_code_file(&path) => out.push(path),
+            Ok(t) if t.is_file() => out.push(path),
             _ => {}
         }
     }
@@ -107,12 +111,18 @@ impl CodeIndex {
         let route_re = Regex::new(r#"["'`](/[A-Za-z0-9_\-./{}:*]{2,120})["'`]"#).expect("valid regex");
         for path in paths {
             let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-            if std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_FILE_BYTES) {
+            // Every file counts for documented paths; only code files are read.
+            index.files.push(rel.clone());
+            if !is_code_file(&path) || std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_FILE_BYTES) {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let mut seen = HashSet::new();
             for m in identifier_re().find_iter(&text) {
-                index.identifiers.insert(m.as_str().to_string());
+                if seen.insert(m.as_str()) {
+                    index.identifiers.insert(m.as_str().to_string());
+                    *index.identifier_files.entry(m.as_str().to_string()).or_default() += 1;
+                }
             }
             for m in flag_re.find_iter(&text) {
                 index.flags.insert(m.as_str().to_string());
@@ -130,15 +140,40 @@ impl CodeIndex {
                     }
                 }
             }
-            index.files.push(rel);
         }
         index.files.sort();
         Ok(index)
     }
 
+    /// Files matching a documented path; `App.js` also matches `App.jsx`, `App.ts`, `App.tsx`.
     fn has_file(&self, wanted: &str) -> Vec<&String> {
         let wanted = wanted.trim_start_matches("./").trim_start_matches('/');
-        self.files.iter().filter(|f| *f == wanted || f.ends_with(&format!("/{wanted}"))).collect()
+        let same = |f: &str| f == wanted || f.ends_with(&format!("/{wanted}"));
+        let exact: Vec<&String> = self.files.iter().filter(|f| same(f)).collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        let Some((stem, ext)) = wanted.rsplit_once('.') else { return exact };
+        if !SCRIPT_EXTENSIONS.contains(&ext) {
+            return exact;
+        }
+        self.files
+            .iter()
+            .filter(|f| SCRIPT_EXTENSIONS.iter().any(|e| same(f) || f.as_str() == format!("{stem}.{e}") || f.ends_with(&format!("/{stem}.{e}"))))
+            .collect()
+    }
+
+    /// Identifiers of a file that few other files use: what the file is about.
+    fn distinctive_identifiers(&self, rel: &str) -> Vec<String> {
+        let Ok(text) = std::fs::read_to_string(self.root.join(rel)) else { return Vec::new() };
+        let mut out: Vec<String> = identifier_re()
+            .find_iter(&text)
+            .map(|m| m.as_str().to_string())
+            .filter(|w| self.identifier_files.get(w).is_some_and(|n| *n <= 3))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     fn has_route(&self, route: &str) -> bool {
@@ -209,7 +244,7 @@ fn backticks() -> &'static Regex {
 
 /// The code element a backtick span names, if it looks like one.
 pub fn classify(span: &str) -> Option<(String, Kind)> {
-    let s = span.trim().trim_end_matches([';', ':', ',']).trim();
+    let s = span.trim().trim_end_matches([';', ':', ',', '.']).trim();
     // Placeholders and patterns (`<id>`, `files/*.jsonl`, `$HOME/...`) are not real elements.
     if s.contains(['<', '>', '*', '$', '|']) || s.starts_with('_') {
         return None;
@@ -281,12 +316,14 @@ fn check(ix: &CodeIndex, symbol: &str, kind: Kind) -> (bool, Vec<String>) {
 }
 
 /// Every code element named in the project's published passages, checked against the code.
-pub fn doc_symbols(state: &AppState, project: &str, graph: &Graph) -> Result<Vec<DocSymbol>> {
+/// `doc`: only the passages of that document.
+pub fn doc_symbols(state: &AppState, project: &str, graph: &Graph, doc: Option<&str>) -> Result<Vec<DocSymbol>> {
     let ix = index_for(state, project)?;
     let passages = rows(
         &graph.reader()?,
-        "MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk) WHERE d.status = 'PUBLISHED' RETURN c.id, d.id, d.title, c.page, c.text",
-        vec![],
+        "MATCH (d:Document)-[:HAS_CHUNK]->(c:Chunk) WHERE d.status = 'PUBLISHED' AND ($doc = '' OR d.id = $doc)
+         RETURN c.id, d.id, d.title, c.page, c.text",
+        vec![("doc", crate::db::s(doc.unwrap_or_default()))],
     )?;
     let mut by_symbol: HashMap<(String, Kind), DocSymbol> = HashMap::new();
     for r in passages {
@@ -327,9 +364,9 @@ pub struct Drift {
     pub by_kind: Vec<(Kind, usize, usize)>,
 }
 
-pub fn drift(state: &AppState, project: &str, graph: &Graph) -> Result<Drift> {
+pub fn drift(state: &AppState, project: &str, graph: &Graph, doc: Option<&str>) -> Result<Drift> {
     let ix = index_for(state, project)?;
-    let symbols = doc_symbols(state, project, graph)?;
+    let symbols = doc_symbols(state, project, graph, doc)?;
     let mut kinds: HashMap<Kind, (usize, usize)> = HashMap::new();
     for s in &symbols {
         let e = kinds.entry(s.kind).or_default();
@@ -372,13 +409,14 @@ pub fn docs_for(state: &AppState, project: &str, graph: &Graph, target: &str) ->
     } else {
         Vec::new()
     };
-    // A file stands for itself and the names it defines.
+    // A file stands for itself, the names it defines and its distinctive identifiers.
     let mut names: HashSet<String> = HashSet::new();
     for f in &files {
         names.insert(f.clone());
         if let Some(base) = Path::new(f).file_name().and_then(|n| n.to_str()) {
             names.insert(base.to_string());
         }
+        names.extend(ix.distinctive_identifiers(f));
         for (name, defs) in &ix.definitions {
             if defs.iter().any(|d| d.rsplit_once(':').is_some_and(|(file, _)| file == f)) {
                 names.insert(name.clone());
@@ -388,14 +426,13 @@ pub fn docs_for(state: &AppState, project: &str, graph: &Graph, target: &str) ->
     if files.is_empty() {
         names.insert(last_segment(target).to_string());
     }
-    let symbols: Vec<DocSymbol> = doc_symbols(state, project, graph)?
+    let symbols: Vec<DocSymbol> = doc_symbols(state, project, graph, None)?
         .into_iter()
         .filter(|s| match s.kind {
             Kind::Symbol => names.contains(&s.symbol) || names.contains(last_segment(&s.symbol)),
             Kind::Path => {
                 let wanted = s.symbol.trim_start_matches("./");
-                files.iter().any(|f| f == wanted || f.ends_with(&format!("/{wanted}")))
-                    || (files.is_empty() && names.contains(wanted))
+                ix.has_file(wanted).iter().any(|f| files.contains(f)) || (files.is_empty() && names.contains(wanted))
             }
             _ => names.contains(&s.symbol),
         })

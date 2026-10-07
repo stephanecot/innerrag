@@ -554,14 +554,21 @@ async fn list_entities(
     Ok(Json(entities))
 }
 
+#[derive(Deserialize)]
+struct EntityDocQuery {
+    /// Only the passages of this document.
+    doc: Option<String>,
+}
+
 async fn get_entity(
     State(state): State<Shared>,
     headers: HeaderMap,
     Path((project, id)): Path<(String, String)>,
+    Query(q): Query<EntityDocQuery>,
 ) -> ApiResult<explore::EntityDetail> {
     let call = Call::start(channel(&headers), &project, "explore", id.clone());
     in_project(&state, project, move |s, g| {
-        let outcome = explore::get_entity(g, &id);
+        let outcome = explore::get_entity(g, &id, q.doc.as_deref().filter(|d| !d.is_empty()));
         call.finish(&s.history, &outcome, |e| {
             let size = e.as_ref().map_or(0, |e| serde_json::to_string(e).map_or(0, |j| j.len()));
             let n = e.as_ref().map_or(0, |e| e.neighbours.len());
@@ -660,8 +667,17 @@ async fn search_handler(
     ))
 }
 
-async fn code_drift(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::code::Drift> {
-    Ok(Json(in_project(&state, project.clone(), move |s, g| crate::code::drift(s, &project, g)).await?))
+async fn code_drift(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Query(q): Query<EntityDocQuery>,
+) -> ApiResult<crate::code::Drift> {
+    Ok(Json(
+        in_project(&state, project.clone(), move |s, g| {
+            crate::code::drift(s, &project, g, q.doc.as_deref().filter(|d| !d.is_empty()))
+        })
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]

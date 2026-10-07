@@ -334,10 +334,24 @@ pub struct EntityDetail {
     #[serde(flatten)]
     pub entity: EntitySummary,
     pub neighbours: Vec<Neighbour>,
+    /// Documents citing the entity, most passages first.
+    pub documents: Vec<EntityDocument>,
     pub passages: Vec<Passage>,
 }
 
-pub fn get_entity(graph: &Graph, id: &str) -> Result<Option<EntityDetail>> {
+#[derive(Serialize)]
+pub struct EntityDocument {
+    pub doc_id: String,
+    pub title: String,
+    pub status: String,
+    pub source: String,
+    pub passages: i64,
+    /// First pages citing it (PDFs), in order.
+    pub pages: Vec<i64>,
+}
+
+/// `doc`: only the passages of that document.
+pub fn get_entity(graph: &Graph, id: &str, doc: Option<&str>) -> Result<Option<EntityDetail>> {
     let conn = graph.reader()?;
     let Some(entity) = entity_rows(rows(
         &conn,
@@ -372,11 +386,35 @@ pub fn get_entity(graph: &Graph, id: &str) -> Result<Option<EntityDetail>> {
         }
     })
     .collect();
+    let documents = rows(
+        &conn,
+        "MATCH (e:Entity {id: $id})<-[:MENTIONS]-(c:Chunk)<-[:HAS_CHUNK]-(d:Document)
+         RETURN d.id, d.title, d.status, d.source, count(c) AS n, collect(c.page)
+         ORDER BY n DESC, d.title",
+        vec![("id", s(id))],
+    )?
+    .iter()
+    .map(|r| {
+        let mut pages: Vec<i64> = crate::db::as_i64s(&r[5]).into_iter().filter(|p| *p > 0).collect();
+        pages.sort_unstable();
+        pages.dedup();
+        pages.truncate(12);
+        EntityDocument {
+            doc_id: as_str(&r[0]),
+            title: as_str(&r[1]),
+            status: as_str(&r[2]),
+            source: as_str(&r[3]),
+            passages: as_i64(&r[4]),
+            pages,
+        }
+    })
+    .collect();
     let passages = rows(
         &conn,
         "MATCH (e:Entity {id: $id})<-[m:MENTIONS]-(c:Chunk)<-[:HAS_CHUNK]-(d:Document)
-         RETURN c.id, d.id, d.title, d.status, c.idx, c.text, c.page ORDER BY m.score DESC LIMIT 20",
-        vec![("id", s(id))],
+         WHERE $doc = '' OR d.id = $doc
+         RETURN c.id, d.id, d.title, d.status, c.idx, c.text, c.page ORDER BY m.score DESC LIMIT 30",
+        vec![("id", s(id)), ("doc", s(doc.unwrap_or_default()))],
     )?
     .iter()
     .map(|r| Passage {
@@ -389,7 +427,7 @@ pub fn get_entity(graph: &Graph, id: &str) -> Result<Option<EntityDetail>> {
         text: as_str(&r[5]),
     })
     .collect();
-    Ok(Some(EntityDetail { entity, neighbours, passages }))
+    Ok(Some(EntityDetail { entity, neighbours, documents, passages }))
 }
 
 #[derive(Serialize)]
