@@ -6,3 +6,6 @@ ui/dist
 /sample
 ui/*.tsbuildinfo
 __pycache__/
+
+# Examples built from client documents: never pushed
+/docs/examples/
