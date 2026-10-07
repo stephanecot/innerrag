@@ -187,8 +187,12 @@ export default function MapView({ project, params }: { project: string; params: 
   }, []);
 
   // Frame the whole graph once the layout settles (and again after a resize or reload).
+  // Entities without any visible link drift away from the rest: framing them would shrink the map.
+  const linkedRef = useRef<Set<string>>(new Set());
+
   const fit = useCallback(() => {
-    fg.current?.zoomToFit(500, 90);
+    const linked = linkedRef.current;
+    fg.current?.zoomToFit(500, 90, (n) => linked.size === 0 || linked.has(String(n.id)));
     // A handful of entities should not fill the screen.
     setTimeout(() => {
       const z = fg.current?.zoom() ?? 1;
@@ -212,6 +216,14 @@ export default function MapView({ project, params }: { project: string; params: 
     const links = data.links.filter((l) => ids.has(endId(l.source)) && ids.has(endId(l.target)));
     return { nodes, links };
   }, [data, hidden]);
+  linkedRef.current = useMemo(() => {
+    const ids = new Set<string>();
+    for (const l of visible.links) {
+      ids.add(endId(l.source));
+      ids.add(endId(l.target));
+    }
+    return ids;
+  }, [visible.links]);
 
   const neighbours = useMemo(() => {
     const set = new Set<string>();

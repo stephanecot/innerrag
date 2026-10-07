@@ -43,7 +43,7 @@ const SHOTS = [
     wait: 9000,
     act: `(await waitFor(() => document.querySelector(".link-score"))).click(); await sleep(1500);`,
   },
-  { name: "documents", project: "innerrag-docs", route: "#/documents", wait: 2500 },
+  { name: "documents", project: "sample", route: "#/documents", wait: 2500 },
   { name: "lecteur", project: "sample", route: "#/lire?doc=5a1e8333-6e5d-404c-80c1-3a6d3c70b2c4&page=324", wait: 3500 },
   {
     name: "recherche",
@@ -81,8 +81,9 @@ const HELPERS = `
   };
   const press = async (key) => {
     const el = document.activeElement;
-    for (const type of ["keydown", "keypress", "keyup"]) el.dispatchEvent(new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true }));
-    if (key === "Enter" && el.form) el.form.requestSubmit();
+    // Like a browser: Enter submits the form unless the page handled the key itself.
+    const down = new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true });
+    if (el.dispatchEvent(down) && key === "Enter" && el.form && el.tagName !== "TEXTAREA") el.form.requestSubmit();
   };
   const clickText = async (selector, text) => {
     const el = await waitFor(() => [...document.querySelectorAll(selector)].find((e) => e.textContent.trim().startsWith(text)));

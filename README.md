@@ -4,11 +4,31 @@ Serveur **Graph RAG** 100 % local, écrit en Rust, construit sur **LadybugDB** (
 
 - **Formats** : PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Markdown (front-matter compris), HTML et texte.
 - **Ingestion asynchrone** : extraction du texte, découpage qui suit les titres, embeddings multilingues (e5-small) et extraction d'entités zero-shot (GLiNER). Les entités citées dans un même passage sont reliées. La progression est suivie par job.
-- **Recherche** : recherche vectorielle fusionnée (RRF) avec l'expansion par le graphe d'entités. Le serveur renvoie un contexte prêt pour un agent ; il ne génère pas de réponse.
+- **Recherche hybride** : similarité sémantique, graphe d'entités et mots-clés (BM25), seuil de pertinence, reclassement par cross-encoder et cache. Le serveur renvoie un contexte prêt pour un agent, à la taille voulue (passages entiers, carte compacte, budget en tokens) ; il ne génère pas de réponse.
 - **Projets** cloisonnés : une base par projet, dans un dossier versionnable dans git.
 - **Documents** : statut `DRAFT` / `PUBLISHED`, créateur, tags, ajout, remplacement et suppression.
 - **Interfaces** : API REST, serveur **MCP** (HTTP), interface web React et plugin Claude Code (skills).
 - **Historique** des appels, avec le volume de contexte renvoyé (tokens estimés), la durée et les erreurs.
+- **Assistant** : discussion avec le Claude Code installé sur votre poste, branché sur le MCP du projet, sans clé d'API.
+- **Lacunes** : les questions restées sans réponse, et les réponses citées par les agents proposées comme questions de référence.
+- **Interface** en français et en anglais.
+
+## Aperçu
+
+![Carte des entités : les liens sont colorés et épaissis selon leur force](docs/screenshots/carte.png)
+
+| | |
+|---|---|
+| ![Pourquoi ce lien ? Les passages qui citent les deux entités](docs/screenshots/lien.png) | ![Assistant : Claude Code local interroge la base et cite ses sources](docs/screenshots/assistant.png) |
+| **Pourquoi ce lien ?** Force du lien et passages qui citent les deux entités. | **Assistant** : le Claude Code local interroge la base par MCP et cite ses sources. |
+| ![Recherche : scores, seuil et apport du graphe](docs/screenshots/recherche.png) | ![Lecteur : le PDF converti en Markdown, avec ses pages](docs/screenshots/lecteur.png) |
+| **Recherche** : pertinence, mots-clés, et ce que le graphe a apporté. | **Lecteur** : le PDF converti en Markdown, avec sommaire et numéros de page. |
+| ![Lacunes : questions sans réponse et réponses citées](docs/screenshots/lacunes.png) | ![Outils MCP expliqués et essayables](docs/screenshots/mcp.png) |
+| **Lacunes** : ce que la base ne couvre pas, et les réponses à valider pour l'évaluation. | **MCP** : les outils vus par l'agent, expliqués et essayables. |
+| ![Documents](docs/screenshots/documents.png) | ![Historique des appels et tokens consommés](docs/screenshots/historique.png) |
+| **Documents** : type, statut, passages et entités. | **Historique** : chaque appel, son canal, sa durée et le contexte renvoyé. |
+
+Captures régénérées par `node scripts/screenshots.mjs` (Chrome sans interface, serveur et pont lancés).
 
 ## Démarrer
 

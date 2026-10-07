@@ -102,6 +102,13 @@ function toolLabel(t: T, name: string, input: Record<string, unknown>): string {
   }
 }
 
+/** The short note an agent may write after reporting its sources ("sources recorded"): not for the reader. */
+function isCitationNote(parts: Part[], k: number): boolean {
+  const prev = parts[k - 1];
+  const part = parts[k];
+  return prev?.kind === "tool" && prev.name === "cite_sources" && part.kind === "text" && part.text.trim().length < 240 && k === parts.length - 1;
+}
+
 const tokens = (text: string) => Math.ceil(text.length / 4);
 
 /** Links each cited document title, with its page when one follows ("Pro Android 5, page 486"), to the reader. */
@@ -147,6 +154,7 @@ export default function AssistantView({ project }: { project: string }) {
   const [seeds, setSeeds] = useState<{ top?: string; link?: [string, string] } | null>(null);
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const abort = useRef<AbortController | null>(null);
+  const sending = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const running = conversation.exchanges.at(-1)?.status === "running";
@@ -274,7 +282,10 @@ export default function AssistantView({ project }: { project: string }) {
 
   const ask = async (question: string) => {
     const message = question.trim();
-    if (!message || running) return;
+    // `running` comes from the last render: a second send in the same tick (double click, Enter
+    // plus submit) would pass it, the ref does not.
+    if (!message || running || sending.current) return;
+    sending.current = true;
     setDraft("");
     setConversation((c) => ({ ...c, at: Date.now(), exchanges: [...c.exchanges, { question: message, parts: [], status: "running", model: model || undefined, strict }] }));
     const ctrl = new AbortController();
@@ -291,6 +302,7 @@ export default function AssistantView({ project }: { project: string }) {
       }
     } finally {
       abort.current = null;
+      sending.current = false;
       inputRef.current?.focus();
     }
   };
@@ -408,7 +420,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                   ))}
                 </ol>
               )}
-              {x.parts.filter((p) => p.kind === "text").map((p, j) => (
+              {x.parts.filter((p, k) => p.kind === "text" && !isCitationNote(x.parts, k)).map((p, j) => (
                 <div key={j} className="chat-text"><Blocks blocks={parse((p as { text: string }).text)} linker={linker} /></div>
               ))}
               {x.status === "running" && (

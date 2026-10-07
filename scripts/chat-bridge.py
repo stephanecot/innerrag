@@ -60,8 +60,10 @@ explore_relation to follow the graph. Always pass session_id "{conversation}" so
 sent twice. Cite your sources as "document title, page N" when the passage gives a page. Keep
 answers short and structured, in Markdown, in the language of the question.
 {grounding}
-Once your answer is written, call cite_sources once with the user's question, the ids of the
-passages you relied on, and the outcome (answered, partial or not_found)."""
+Order of your reply: first write the complete answer for the user as text (that text is all the
+user sees); only then, as your very last action, call cite_sources once with the user's question,
+the ids of the passages you relied on and the outcome (answered, partial or not_found). Never call
+cite_sources before the answer text, and write nothing after it."""
 
 # Default: the answer must come from the documents only.
 STRICT = """Answer ONLY from the passages returned by the innerrag tools. Never add facts, code,
