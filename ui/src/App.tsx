@@ -172,12 +172,6 @@ export default function App() {
       <nav className="rail" aria-label="Navigation principale">
         <div className="brand"><Logo />innerrag</div>
         <ProjectSwitcher projects={projects} current={current} onPick={setProject} />
-        <IngestionIndicator
-          onOpen={(job) => {
-            setProject(job.project);
-            go("documents");
-          }}
-        />
         <div className="nav">
           {NAV.map(({ route, label, icon: Icon }) => (
             <a key={route} href={href(route)} aria-current={location.route === route || (route === "documents" && location.route === "lire") ? "page" : undefined}>
@@ -210,6 +204,12 @@ export default function App() {
         </div>
       </nav>
       <main className="content">{view}</main>
+      <IngestionIndicator
+        onOpen={(job) => {
+          setProject(job.project);
+          go("documents");
+        }}
+      />
     </div>
   );
 }
@@ -217,6 +217,7 @@ export default function App() {
 /** Ingestions of every project, visible from any page. */
 function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [folded, setFolded] = useState(false);
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -242,18 +243,24 @@ function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
   }, []);
   if (!jobs.length) return null;
   return (
-    <section className="rail-jobs" aria-label="Ingestions en cours" aria-live="polite">
-      <span className="rail-label">{jobs.length > 1 ? `${jobs.length} ingestions en cours` : "Ingestion en cours"}</span>
-      {jobs.slice(0, 2).map((j) => (
-        <div key={j.id} className="rail-job-wrap">
-          <button type="button" className="rail-job" onClick={() => onOpen(j)}>
-            <span className="rail-job-name">{j.filename}</span>
-            <span className="rail-job-meta">{j.project}, {JOB_STAGE[j.stage].toLowerCase()} {j.stage === "queued" ? "" : `${jobPercent(j)} %`}</span>
-            <span className="rail-job-track"><span style={{ width: `${jobPercent(j)}%` }} /></span>
+    <section className={`jobs-float${folded ? " folded" : ""}`} aria-label="Ingestions en cours" aria-live="polite">
+      <div className="jobs-float-head">
+        <span className="jobs-float-spinner" aria-hidden="true" />
+        <span className="jobs-float-title">{jobs.length > 1 ? `${jobs.length} ingestions en cours` : "Ingestion en cours"}</span>
+        <button type="button" className="jobs-float-fold" onClick={() => setFolded(!folded)} aria-expanded={!folded}>
+          {folded ? `${jobPercent(jobs[0])} %` : "Réduire"}
+        </button>
+      </div>
+      {!folded && jobs.slice(0, 3).map((j) => (
+        <div key={j.id} className="jobs-float-job">
+          <button type="button" className="jobs-float-open" onClick={() => onOpen(j)}>
+            <span className="jobs-float-name">{j.filename}</span>
+            <span className="jobs-float-meta">{j.project}, {JOB_STAGE[j.stage].toLowerCase()} {j.stage === "queued" ? "" : `${jobPercent(j)} %`}</span>
+            <span className="jobs-float-track"><span style={{ width: `${jobPercent(j)}%` }} /></span>
           </button>
           <button
             type="button"
-            className="rail-job-cancel"
+            className="jobs-float-cancel"
             aria-label={`Annuler l'ingestion de ${j.filename}`}
             title="Annuler cette ingestion"
             onClick={async () => {
@@ -265,7 +272,7 @@ function IngestionIndicator({ onOpen }: { onOpen: (job: Job) => void }) {
           </button>
         </div>
       ))}
-      {jobs.length > 2 && <span className="rail-label">et {jobs.length - 2} autres en attente</span>}
+      {!folded && jobs.length > 3 && <span className="jobs-float-more">et {jobs.length - 3} autres en attente</span>}
     </section>
   );
 }

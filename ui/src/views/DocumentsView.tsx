@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DocumentSummary, type DocumentWithChunks, type FileInfo, type Job, type ServerConfig, type Status, type Stats } from "../api";
 import { href } from "../App";
-import { CloseIcon, PlusIcon } from "../Icons";
-import { bytes, JOB_STAGE, jobPercent, longDate, num, plural, relativeDate, STATUS_LABEL } from "../util";
+import { CloseIcon, DocTypeIcon, PlusIcon } from "../Icons";
+import { bytes, DOC_KIND, docKind, JOB_STAGE, jobPercent, longDate, num, plural, relativeDate, STATUS_LABEL } from "../util";
 
 const ACCEPT = ".pdf,.docx,.pptx,.doc,.ppt,.md,.markdown,.html,.htm,.txt";
 
@@ -168,7 +168,12 @@ export default function DocumentsView({
               <tbody>
                 {pending.map((j) => (
                   <tr key={j.id} className="pending-row">
-                    <td><strong className="cell-title" title={j.filename}>{j.filename}</strong></td>
+                    <td>
+                      <span className="title-with-type">
+                        <DocTypeIcon kind={docKind(j.filename)} {...DOC_KIND[docKind(j.filename)]} />
+                        <strong className="cell-title" title={j.filename}>{j.filename}</strong>
+                      </span>
+                    </td>
                     <td><span className="status status-INDEXING">Indexation {jobPercent(j)} %</span></td>
                     <td colSpan={4} className="muted">
                       {JOB_STAGE[j.stage]}{j.total ? ` : ${num(j.done)} / ${num(j.total)} passages` : ""}
@@ -194,7 +199,10 @@ export default function DocumentsView({
                     onClick={() => setPanel({ kind: "doc", id: d.id })}
                   >
                     <td>
-                      <button type="button" className="row-title cell-title" title={d.title} onClick={() => setPanel({ kind: "doc", id: d.id })}>{d.title}</button>
+                      <span className="title-with-type">
+                        <DocTypeIcon kind={docKind(d.source)} {...DOC_KIND[docKind(d.source)]} />
+                        <button type="button" className="row-title cell-title" title={d.title} onClick={() => setPanel({ kind: "doc", id: d.id })}>{d.title}</button>
+                      </span>
                     </td>
                     <td><span className={`status status-${d.status}`}>{STATUS_LABEL[d.status]}</span></td>
                     <td>
@@ -534,7 +542,10 @@ function DocumentPanel({
     <aside className="side" aria-labelledby="doc-title">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <h2 id="doc-title" className="side-title" style={{ fontSize: 26 }} title={doc.title}>{doc.title}</h2>
+          <h2 id="doc-title" className="side-title title-with-type" style={{ fontSize: 26 }} title={doc.title}>
+            <DocTypeIcon kind={docKind(doc.source)} {...DOC_KIND[docKind(doc.source)]} />
+            <span>{doc.title}</span>
+          </h2>
           <p className="muted wrap-anywhere" style={{ fontSize: 14 }}>
             Identifiant {doc.id}, créé par {doc.creator} le {longDate(doc.created_at)}
           </p>

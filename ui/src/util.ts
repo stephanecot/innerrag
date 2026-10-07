@@ -148,3 +148,25 @@ export function strengthColor(strength: number, alpha = 1): string {
   const [r, g, bl] = a.map((v, i) => Math.round(v + (b[i] - v) * local));
   return `rgba(${r}, ${g}, ${bl}, ${alpha})`;
 }
+
+export type DocKind = "pdf" | "word" | "powerpoint" | "markdown" | "html" | "text";
+
+/** Kind of a document, from the extension of its source file. */
+export function docKind(source: string): DocKind {
+  const ext = source.toLowerCase().split(/[?#]/)[0].split(".").pop() ?? "";
+  if (ext === "pdf") return "pdf";
+  if (ext === "docx" || ext === "doc" || ext === "odt" || ext === "rtf") return "word";
+  if (ext === "pptx" || ext === "ppt" || ext === "odp") return "powerpoint";
+  if (ext === "md" || ext === "markdown") return "markdown";
+  if (ext === "html" || ext === "htm") return "html";
+  return "text";
+}
+
+export const DOC_KIND: Record<DocKind, { badge: string; label: string }> = {
+  pdf: { badge: "PDF", label: "PDF" },
+  word: { badge: "DOC", label: "Word" },
+  powerpoint: { badge: "PPT", label: "PowerPoint" },
+  markdown: { badge: "MD", label: "Markdown" },
+  html: { badge: "WEB", label: "Page web" },
+  text: { badge: "TXT", label: "Texte" },
+};

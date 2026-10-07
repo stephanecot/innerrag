@@ -34,3 +34,14 @@ export const Logo = () => (
     <circle cx="17" cy="17" r="3" fill="#F2F4EF" />
   </svg>
 );
+
+/** A sheet with its format written on a coloured band (PDF, DOC, PPT, MD…). */
+export const DocTypeIcon = ({ kind, badge, label }: { kind: string; badge: string; label: string }) => (
+  <svg className={`doc-type doc-type-${kind}`} width="26" height="30" viewBox="0 0 26 30" role="img" aria-label={label}>
+    <title>{label}</title>
+    <path d="M3 1.5h13l7 7V28.5H3z" fill="var(--surface)" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <path d="M16 1.5v7h7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <rect x="0.5" y="15" width="21" height="10" rx="2" fill="currentColor" />
+    <text x="11" y="22.6" textAnchor="middle" fontSize="7.4" fontWeight="700" fill="#fff" fontFamily="var(--font)" letterSpacing="0.2">{badge}</text>
+  </svg>
+);
