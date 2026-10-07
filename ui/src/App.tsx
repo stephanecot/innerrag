@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { api, type Job, type Project, type ServerConfig } from "./api";
 import {
-  CheckIcon, ChevronIcon, ConsoleIcon, DocIcon, FolderIcon, HistoryIcon, Logo, MapIcon, MoonIcon, SearchIcon, SunIcon,
+  ChatIcon, CheckIcon, ChevronIcon, ConsoleIcon, DocIcon, FolderIcon, HistoryIcon, Logo, MapIcon, MoonIcon, SearchIcon, SunIcon,
 } from "./Icons";
 import { JOB_STAGE, jobPercent } from "./util";
 import MapView from "./views/MapView";
@@ -12,15 +12,16 @@ import CypherView from "./views/CypherView";
 import ProjectsView from "./views/ProjectsView";
 import ReaderView from "./views/ReaderView";
 import EvalView from "./views/EvalView";
+import AssistantView from "./views/AssistantView";
 
-export type Route = "carte" | "documents" | "lire" | "recherche" | "evaluation" | "historique" | "cypher" | "projets";
+export type Route = "carte" | "documents" | "lire" | "recherche" | "assistant" | "evaluation" | "historique" | "cypher" | "projets";
 
 export interface Location {
   route: Route;
   params: URLSearchParams;
 }
 
-const ROUTES: Route[] = ["carte", "documents", "lire", "recherche", "evaluation", "historique", "cypher", "projets"];
+const ROUTES: Route[] = ["carte", "documents", "lire", "recherche", "assistant", "evaluation", "historique", "cypher", "projets"];
 
 function readLocation(): Location {
   const [path, query = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
@@ -60,6 +61,7 @@ const NAV: { route: Route; label: string; icon: () => ReactElement }[] = [
   { route: "carte", label: "Carte", icon: MapIcon },
   { route: "documents", label: "Documents", icon: DocIcon },
   { route: "recherche", label: "Recherche", icon: () => <SearchIcon /> },
+  { route: "assistant", label: "Assistant", icon: ChatIcon },
   { route: "evaluation", label: "Évaluation", icon: CheckIcon },
   { route: "historique", label: "Historique", icon: HistoryIcon },
   { route: "cypher", label: "Console Cypher", icon: ConsoleIcon },
@@ -142,6 +144,8 @@ export default function App() {
         return <ReaderView key={`${key}:${location.params.get("doc")}`} project={project} params={location.params} />;
       case "recherche":
         return <SearchView key={key} project={project} />;
+      case "assistant":
+        return <AssistantView key={key} project={project} />;
       case "evaluation":
         return <EvalView key={key} project={project} />;
       case "cypher":

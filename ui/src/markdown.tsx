@@ -80,45 +80,58 @@ export function parse(md: string): Block[] {
   return blocks;
 }
 
-/** **bold** and `code` spans. */
-export function inline(text: string): ReactNode[] {
+/** Turns plain text into nodes, for instance links on document citations. */
+export type Linker = (text: string, key: string) => ReactNode[];
+
+/** **bold**, *italic* and `code` spans; `linker` handles the plain text in between. */
+export function inline(text: string, linker?: Linker, prefix = ""): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|(?<![\w*])\*[^*\s][^*]*?(?<!\s)\*(?![\w*]))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;
+  const plain = (t: string) => {
+    const key = `${prefix}${k++}`;
+    if (linker) out.push(...linker(t, key));
+    else out.push(t);
+  };
   while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) plain(text.slice(last, m.index));
     const token = m[0];
-    out.push(token.startsWith("`") ? <code key={k++}>{token.slice(1, -1)}</code> : <strong key={k++}>{token.slice(2, -2)}</strong>);
+    const key = `${prefix}${k++}`;
+    out.push(
+      token.startsWith("`") ? <code key={key}>{token.slice(1, -1)}</code>
+        : token.startsWith("**") ? <strong key={key}>{inline(token.slice(2, -2), linker, `${key}.`)}</strong>
+        : <em key={key}>{inline(token.slice(1, -1), linker, `${key}.`)}</em>,
+    );
     last = m.index + token.length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) plain(text.slice(last));
   return out;
 }
 
 export function Blocks({
-  blocks, onPage, highlightPage,
-}: { blocks: Block[]; onPage?: (page: number) => void; highlightPage?: number }) {
+  blocks, onPage, highlightPage, linker,
+}: { blocks: Block[]; onPage?: (page: number) => void; highlightPage?: number; linker?: Linker }) {
   return (
     <>
       {blocks.map((b, i) => {
         switch (b.kind) {
           case "heading": {
             const Tag = (`h${Math.min(b.level + 1, 6)}`) as "h2";
-            return <Tag key={i} id={b.id} className={`md-h md-h${b.level}`}>{inline(b.text)}</Tag>;
+            return <Tag key={i} id={b.id} className={`md-h md-h${b.level}`}>{inline(b.text, linker)}</Tag>;
           }
           case "para":
-            return <p key={i} className="md-p">{inline(b.text)}</p>;
+            return <p key={i} className="md-p">{inline(b.text, linker)}</p>;
           case "list":
-            return <ul key={i} className="md-list">{b.items.map((it, j) => <li key={j}>{inline(it)}</li>)}</ul>;
+            return <ul key={i} className="md-list">{b.items.map((it, j) => <li key={j}>{inline(it, linker)}</li>)}</ul>;
           case "code":
             return <pre key={i} className="md-code"><code>{b.text}</code></pre>;
           case "table":
             return (
               <div key={i} className="md-table">
                 <table>
-                  <tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{inline(c)}</td>)}</tr>)}</tbody>
+                  <tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{inline(c, linker)}</td>)}</tr>)}</tbody>
                 </table>
               </div>
             );

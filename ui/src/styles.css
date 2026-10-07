@@ -434,3 +434,49 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---- Assistant (chat with the local Claude Code) ---- */
+.chat-page { gap: 24px; }
+.bridge-status { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); font-size: 14px; color: var(--ink-soft); }
+.bridge-status::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-soft); }
+.bridge-status.on { color: var(--ink); }
+.bridge-status.on::before { background: var(--c-location); }
+.bridge-setup { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; max-width: 80ch; }
+.bridge-setup p { color: var(--ink-2); }
+.chat-thread { display: flex; flex-direction: column; gap: 36px; max-width: 80ch; width: 100%; flex: 1; }
+.chat-start { display: flex; flex-direction: column; gap: 10px; }
+.chat-suggestion { font-weight: 500; white-space: normal; text-align: left; min-height: 44px; padding: 8px 14px; }
+.chat-exchange { display: flex; flex-direction: column; gap: 14px; }
+.chat-question { font-family: var(--font-display); font-size: 21px; font-weight: 600; line-height: 1.25; padding-left: 14px; border-left: 3px solid var(--link); white-space: pre-wrap; }
+.chat-answer { display: flex; flex-direction: column; gap: 12px; }
+/* The agent's path through the base: each tool call is a waypoint on a dashed trail. */
+.chat-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.chat-steps li { position: relative; padding-left: 26px; }
+.chat-steps li::before { content: ""; position: absolute; left: 6px; top: 0; bottom: 0; border-left: 1.5px dashed var(--rule); }
+.chat-steps li:first-child::before { top: 18px; }
+.chat-steps li:last-child::before { bottom: calc(100% - 18px); }
+.chat-steps li:only-child::before { display: none; }
+.chat-steps summary { display: flex; align-items: center; gap: 10px; min-height: 36px; cursor: pointer; list-style: none; font-size: 14px; color: var(--ink-2); }
+.chat-steps summary::-webkit-details-marker { display: none; }
+.chat-steps summary:hover .chat-step-label { text-decoration: underline; }
+.chat-step-dot { position: absolute; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--c-technology); border: 2px solid var(--paper); box-sizing: content-box; margin-left: -2px; }
+.chat-step-dot.busy { background: var(--paper); border-color: var(--c-technology); animation: chat-pulse 1.2s ease-in-out infinite; }
+.chat-step-dot.failed { background: var(--danger); }
+.chat-step-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-step-size { color: var(--ink-soft); font-size: 13px; white-space: nowrap; }
+.chat-step-result { margin: 4px 0 10px; padding: 12px 14px; max-height: 300px; overflow: auto; background: var(--sunken); border-radius: 8px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-text { line-height: 1.6; }
+.chat-text .md-h { margin-top: 0.8em; }
+.chat-text .md-p:last-child, .chat-text .md-list:last-child { margin-bottom: 0; }
+.chat-text code { font-family: var(--font-mono); font-size: 0.9em; background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
+.chat-wait { color: var(--ink-soft); font-style: italic; }
+.chat-meta { color: var(--ink-soft); font-size: 13px; }
+.chat-composer { position: sticky; bottom: 0; max-width: 80ch; width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 12px 0 20px; background: linear-gradient(to bottom, transparent, var(--paper) 14px); }
+.chat-composer .textarea { min-height: 64px; resize: none; }
+.chat-composer-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+@keyframes chat-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-technology) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .chat-step-dot.busy { animation: none; } }
+.chat-text .md-h1, .chat-text .md-h2 { font-size: 20px; }
+.chat-text .md-h3, .chat-text .md-h4, .chat-text .md-h5, .chat-text .md-h6 { font-size: 17px; }
+.chat-page > .page-head { max-width: 80ch; }
+.chat-text pre code { background: none; padding: 0; color: inherit; font-size: inherit; }

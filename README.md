@@ -138,11 +138,26 @@ Corps d'un document texte : `{"text","title?","id?","source?","tags?":[],"status
 - `POST /mcp` : projet par défaut ; chaque outil accepte un argument `project`, et `list_projects` liste les projets.
 - `POST /mcp/{project}` : lié à un projet.
 
-Outils : `search_knowledge`, `explore_entity`, `ingest_document` (texte), `ingest_file` (fichier en base64), `ingestion_status`, `list_documents`, `graph_stats`, `run_cypher`. Les ingestions répondent tout de suite avec un job, sauf avec `wait: true` (attente jusqu'à 2 minutes).
+Outils : `search_knowledge`, `explore_entity`, `explore_relation`, `ingest_document` (texte), `ingest_file` (fichier en base64), `ingestion_status`, `list_documents`, `graph_stats`, `run_cypher`. Les ingestions répondent tout de suite avec un job, sauf avec `wait: true` (attente jusqu'à 2 minutes).
 
 ```bash
 claude mcp add --transport http innerrag http://localhost:8080/mcp/mon-projet
 ```
+
+## Assistant (Claude Code local, sans clé d'API)
+
+La page « Assistant » de l'interface discute avec le Claude Code de votre poste, branché sur le MCP du projet ouvert. Le serveur tourne dans Docker et ne peut pas lancer ce Claude Code : un petit pont, sans dépendance, fait le lien sur la machine hôte.
+
+```bash
+python3 scripts/chat-bridge.py            # macOS, Linux
+py scripts\chat-bridge.py                # Windows
+```
+
+- Chaque message lance `claude -p` avec le seul serveur MCP innerrag (`--strict-mcp-config`), sans outils intégrés (ni terminal, ni fichiers) et sans les outils d'ingestion, sauf avec `--allow-writes`.
+- `ANTHROPIC_API_KEY` et `ANTHROPIC_AUTH_TOKEN` sont retirés de l'environnement : Claude Code utilise le compte avec lequel vous êtes connecté, et les messages comptent dans cet abonnement.
+- Le pont écoute sur `127.0.0.1:18765` et ne répond qu'aux pages de l'interface (contrôle de l'en-tête `Origin`).
+- Les conversations reprennent la session Claude Code (`--resume`) ; les appels MCP apparaissent dans l'historique.
+- Options : `--innerrag http://localhost:18080`, `--port`, `--model sonnet`, `--allow-writes`.
 
 ## Plugin Claude Code (skills)
 
