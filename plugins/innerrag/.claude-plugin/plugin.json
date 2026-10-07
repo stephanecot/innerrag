@@ -1,0 +1,6 @@
+{
+  "name": "innerrag",
+  "version": "0.1.0",
+  "description": "Talk to an innerrag Graph RAG server: search the knowledge graph, ingest and manage documents, projects, entities and call history.",
+  "keywords": ["rag", "graph-rag", "knowledge-graph", "ladybugdb", "mcp"]
+}

@@ -1,0 +1,44 @@
+services:
+  innerrag:
+    build:
+      context: .
+      target: cpu
+    image: innerrag:latest
+    ports:
+      # No authentication: only this machine can reach the server. Use "8080:8080" on a trusted network.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # All projects and the call history.
+      - ./data:/data
+      # A project shared through git can be mounted on its own, for example:
+      # - ./mon-depot/.innerrag:/data/projects/mon-projet
+    environment:
+      INNERRAG_USER: ${INNERRAG_USER:-local}
+      # INNERRAG_DEFAULT_STATUS: DRAFT
+      # INNERRAG_NER_LABELS: person,organization,location,event,product,technology
+    restart: unless-stopped
+
+  # NVIDIA GPU variant: docker compose --profile gpu up -d innerrag-gpu
+  # (needs the NVIDIA Container Toolkit on a Linux or Windows/WSL2 host; not available on macOS)
+  innerrag-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      target: runtime-cuda
+      platforms: ["linux/amd64"]
+    image: innerrag:cuda
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      INNERRAG_USER: ${INNERRAG_USER:-local}
+      INNERRAG_DEVICE: auto
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

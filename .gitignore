@@ -1,0 +1,6 @@
+/target
+/data
+/models
+ui/node_modules
+ui/dist
+/sample

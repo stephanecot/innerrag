@@ -1,0 +1,11 @@
+{
+  "name": "innerrag",
+  "owner": { "name": "innerrag" },
+  "plugins": [
+    {
+      "name": "innerrag",
+      "source": "./plugins/innerrag",
+      "description": "Skills and MCP connection for an innerrag Graph RAG server (search, ingestion, documents, projects, graph exploration, usage)."
+    }
+  ]
+}
