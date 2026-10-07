@@ -77,13 +77,17 @@ const quote = (v: unknown) => (typeof v === "string" && v ? ` « ${v} »` : "");
 function toolLabel(name: string, input: Record<string, unknown>): string {
   switch (name) {
     case "search_knowledge":
-      return `Recherche${quote(input.query)}`;
+      return `${input.mode === "map" ? "Survole" : "Recherche"}${quote(input.query)}`;
     case "explore_entity":
       return `Explore l'entité${quote(input.name)}`;
     case "explore_relation":
       return `Examine le lien${quote(input.a)} et${quote(input.b)}`;
     case "list_documents":
       return "Liste les documents";
+    case "read_passages":
+      return `Lit ${Array.isArray(input.ids) ? input.ids.length : ""} passage${Array.isArray(input.ids) && input.ids.length > 1 ? "s" : ""}${input.window ? " avec leur contexte" : ""}`;
+    case "cite_sources":
+      return input.outcome === "not_found" ? "Signale une question sans réponse" : `Note les sources de sa réponse (${Array.isArray(input.chunk_ids) ? input.chunk_ids.length : 0})`;
     case "graph_stats":
       return "Consulte les chiffres de la base";
     case "run_cypher":
@@ -267,7 +271,7 @@ export default function AssistantView({ project }: { project: string }) {
     const ctrl = new AbortController();
     abort.current = ctrl;
     try {
-      await send(bridge, { project, message, session: conversation.session, model: model || undefined, strict }, onEvent, ctrl.signal);
+      await send(bridge, { project, message, session: conversation.session, model: model || undefined, strict, conversation: conversation.id }, onEvent, ctrl.signal);
       update((x) => (x.status === "running" ? { ...x, status: "error", error: "Le pont a coupé la réponse." } : x));
     } catch (err) {
       if (ctrl.signal.aborted) {

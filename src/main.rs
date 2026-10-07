@@ -1,11 +1,13 @@
 mod api;
 mod chunk;
 mod config;
+mod context;
 mod db;
 mod embed;
 mod eval;
 mod explore;
 mod extract;
+mod feedback;
 mod history;
 mod ingest;
 mod jobs;

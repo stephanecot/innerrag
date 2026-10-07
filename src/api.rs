@@ -119,6 +119,11 @@ pub fn router(state: Shared) -> Router {
         .route("/search", post(search_handler))
         .route("/eval", get(get_eval).put(put_eval))
         .route("/eval/run", post(run_eval))
+        .route("/passages", post(read_passages))
+        .route("/feedback", get(get_feedback))
+        .route("/feedback/cite", post(cite_feedback))
+        .route("/feedback/dismiss", post(dismiss_feedback))
+        .route("/feedback/accept", post(accept_feedback))
         .route("/cypher", post(cypher));
     let api = Router::new()
         .route("/config", get(config))
@@ -624,15 +629,106 @@ async fn search_handler(
     Path(project): Path<String>,
     Json(req): Json<SearchRequest>,
 ) -> ApiResult<search::SearchResponse> {
-    let call = Call::start(channel(&headers), &project, "search", req.query.clone());
+    let ch = channel(&headers);
+    let call = Call::start(ch, &project, "search", req.query.clone());
     Ok(Json(
-        in_project(&state, project, move |s, g| {
-            let outcome = search::search(s, g, req);
+        in_project(&state, project.clone(), move |s, g| {
+            let opts = (req.mode.is_some() || req.budget.is_some() || req.session_id.is_some()).then(|| -> anyhow::Result<_> {
+                Ok(crate::context::Options {
+                    mode: crate::context::Mode::parse(req.mode.as_deref())?,
+                    budget: req.budget,
+                    session: req.session_id.clone().filter(|s| !s.is_empty()),
+                })
+            });
+            let opts = opts.transpose()?;
+            let mut outcome = search::search(s, g, req);
+            if let (Ok(r), Some(opts)) = (&mut outcome, &opts) {
+                r.context = crate::context::render(s, &project, r, opts)?;
+            }
+            if let Ok(r) = &outcome {
+                crate::feedback::record_search(g, &r.query, ch, r.chunks.iter().map(|c| c.id.clone()).collect(), r.best_similarity);
+            }
             call.finish(&s.history, &outcome, |r| (count(r.chunks.len(), "passage", "passages"), r.context.len()));
             outcome
         })
         .await?,
     ))
+}
+
+#[derive(Deserialize)]
+struct ReadBody {
+    ids: Vec<String>,
+    #[serde(default)]
+    window: i64,
+    session_id: Option<String>,
+}
+
+async fn read_passages(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Path(project): Path<String>,
+    Json(body): Json<ReadBody>,
+) -> ApiResult<serde_json::Value> {
+    let call = Call::start(channel(&headers), &project, "read", body.ids.join(", "));
+    let text = in_project(&state, project.clone(), move |s, g| {
+        let outcome = crate::context::read_passages(g, &project, &body.ids, body.window, body.session_id.as_deref());
+        call.finish(&s.history, &outcome, |t| (count(body.ids.len(), "passage", "passages"), t.len()));
+        outcome
+    })
+    .await?;
+    Ok(Json(json!({ "text": text })))
+}
+
+async fn get_feedback(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::feedback::Report> {
+    Ok(Json(in_project(&state, project, |s, g| crate::feedback::report(s, g)).await?))
+}
+
+#[derive(Deserialize)]
+struct CiteBody {
+    question: String,
+    #[serde(default)]
+    chunk_ids: Vec<String>,
+    outcome: String,
+}
+
+async fn cite_feedback(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Path(project): Path<String>,
+    Json(body): Json<CiteBody>,
+) -> Result<StatusCode, ApiError> {
+    let ch = channel(&headers);
+    in_project(&state, project, move |_, g| {
+        let outcome = crate::feedback::Outcome::parse(&body.outcome)?;
+        crate::feedback::cite(g, &body.question, body.chunk_ids, outcome, ch)
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct FeedbackKey {
+    key: String,
+    /// accept: add as an out-of-scope question (no passage expected).
+    #[serde(default)]
+    out_of_scope: bool,
+}
+
+async fn dismiss_feedback(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Json(body): Json<FeedbackKey>,
+) -> Result<StatusCode, ApiError> {
+    in_project(&state, project, move |_, g| crate::feedback::dismiss(g, &body.key)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn accept_feedback(
+    State(state): State<Shared>,
+    Path(project): Path<String>,
+    Json(body): Json<FeedbackKey>,
+) -> ApiResult<crate::eval::EvalSet> {
+    Ok(Json(in_project(&state, project, move |s, g| crate::feedback::accept(s, g, &body.key, body.out_of_scope)).await?))
 }
 
 async fn get_eval(State(state): State<Shared>, Path(project): Path<String>) -> ApiResult<crate::eval::EvalSet> {

@@ -9,7 +9,7 @@ use anyhow::Result;
 use lbug::LogicalType;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{self, as_f64, as_i64, as_str, as_strings, rows, s, Graph, Structs};
+use crate::db::{self, as_f64, as_floats, as_i64, as_str, as_strings, rows, s, Graph, Structs};
 use crate::ingest::normalize_tags;
 use crate::{AppState, Invalid};
 
@@ -17,6 +17,8 @@ const MAX_NEIGHBOURS: i64 = 30;
 /// Largest bonus the graph adds to a passage's similarity (passages mentioning the
 /// most relevant entities get all of it).
 const GRAPH_BOOST: f64 = 0.05;
+/// Passages closer than this to a better-ranked one say the same thing: only the first is kept.
+const NEAR_DUPLICATE: f32 = 0.95;
 /// Largest bonus for passages that contain the question's words (BM25, normalised per query).
 /// Keyword evidence may also bring a passage just under the threshold over it.
 const KEYWORD_BOOST: f64 = 0.04;
@@ -38,6 +40,15 @@ pub struct SearchRequest {
     /// Minimum cosine similarity between the question and a passage (0 disables the filter).
     /// Defaults to the server setting.
     pub min_score: Option<f64>,
+    /// How `context` is written for an agent: "full" (default) or "map" (see context.rs).
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Ceiling of `context` in tokens.
+    #[serde(default)]
+    pub budget: Option<usize>,
+    /// Passages already sent in this session are not repeated in `context`.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Document filter appended to queries that bind the document as `d`.
@@ -103,6 +114,8 @@ pub struct SearchResponse {
     pub below_threshold: usize,
     /// Best similarity among all candidates (tells how close the base came).
     pub best_similarity: Option<f64>,
+    /// Passages dropped because a better-ranked one says nearly the same thing.
+    pub near_duplicates: usize,
     pub millis: u128,
 }
 
@@ -265,7 +278,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         }
     }
     let dim = state.embedder.dim();
-    type Detail = (String, String, String, i64, String, Vec<String>, Option<i64>, f64);
+    type Detail = (String, String, String, i64, String, Vec<String>, Option<i64>, f64, Vec<f32>);
     let details: HashMap<String, Detail> = rows(
         &conn,
         &format!(
@@ -274,7 +287,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
              WHERE {DOC_FILTER}
              OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
              RETURN c.id, d.id, d.title, d.status, c.idx, c.text, collect(e.name), c.page,
-                    array_cosine_similarity(c.embedding, CAST($q AS FLOAT[{dim}]))"
+                    array_cosine_similarity(c.embedding, CAST($q AS FLOAT[{dim}])), c.embedding"
         ),
         vec![("ids", db::strings(candidates.clone())), ("q", db::floats(&qv)), ("drafts", drafts.clone()), ("tags", tags.clone())],
     )?
@@ -283,7 +296,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         let page = Some(as_i64(&r[7])).filter(|p| *p > 0);
         let detail = (
             as_str(&r[1]), as_str(&r[2]), as_str(&r[3]), as_i64(&r[4]), as_str(&r[5]),
-            as_strings(&r[6]), page, as_f64(&r[8]),
+            as_strings(&r[6]), page, as_f64(&r[8]), as_floats(&r[9]),
         );
         (as_str(&r[0]), detail)
     })
@@ -293,7 +306,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
     let mut chunks: Vec<ChunkHit> = candidates
         .into_iter()
         .filter_map(|id| {
-            let (doc_id, doc_title, doc_status, idx, text, entities, page, similarity) = details.get(&id)?.clone();
+            let (doc_id, doc_title, doc_status, idx, text, entities, page, similarity, _) = details.get(&id)?.clone();
             let keyword_boost = keyword_scores.get(&id).map_or(0.0, |s| KEYWORD_BOOST * s / max_keyword);
             if similarity + keyword_boost < min_score {
                 below_threshold += 1;
@@ -323,6 +336,21 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         }
         chunks.sort_by(|a, b| b.rerank_score.unwrap_or(0.0).total_cmp(&a.rerank_score.unwrap_or(0.0)));
     }
+    // Near-identical passages (a listing printed twice, a repeated paragraph) waste the agent's tokens.
+    let mut kept: Vec<&Vec<f32>> = Vec::new();
+    let mut near_duplicates = 0;
+    chunks.retain(|c| {
+        let Some(v) = details.get(&c.id).map(|d| &d.8).filter(|v| !v.is_empty()) else { return true };
+        if kept.len() >= k {
+            return true; // truncated below anyway
+        }
+        if kept.iter().any(|w| v.iter().zip(w.iter()).map(|(a, b)| a * b).sum::<f32>() >= NEAR_DUPLICATE) {
+            near_duplicates += 1;
+            return false;
+        }
+        kept.push(v);
+        true
+    });
     chunks.truncate(k);
 
     // 7. Relations among the selected entities.
@@ -368,6 +396,7 @@ pub fn search(state: &AppState, graph: &Graph, req: SearchRequest) -> Result<Sea
         min_score,
         below_threshold,
         best_similarity,
+        near_duplicates,
         millis: started.elapsed().as_millis(),
     })
 }

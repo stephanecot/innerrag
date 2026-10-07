@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { api, type Job, type Project, type ServerConfig } from "./api";
 import {
-  ChatIcon, CheckIcon, PlugIcon, ChevronIcon, ConsoleIcon, DocIcon, FolderIcon, HistoryIcon, Logo, MapIcon, MoonIcon, SearchIcon, SunIcon,
+  ChatIcon, CheckIcon, GapIcon, PlugIcon, ChevronIcon, ConsoleIcon, DocIcon, FolderIcon, HistoryIcon, Logo, MapIcon, MoonIcon, SearchIcon, SunIcon,
 } from "./Icons";
 import { JOB_STAGE, jobPercent } from "./util";
 import MapView from "./views/MapView";
@@ -14,15 +14,16 @@ import ReaderView from "./views/ReaderView";
 import EvalView from "./views/EvalView";
 import AssistantView from "./views/AssistantView";
 import McpView from "./views/McpView";
+import GapsView from "./views/GapsView";
 
-export type Route = "carte" | "documents" | "lire" | "recherche" | "assistant" | "evaluation" | "historique" | "cypher" | "mcp" | "projets";
+export type Route = "carte" | "documents" | "lire" | "recherche" | "assistant" | "evaluation" | "lacunes" | "historique" | "cypher" | "mcp" | "projets";
 
 export interface Location {
   route: Route;
   params: URLSearchParams;
 }
 
-const ROUTES: Route[] = ["carte", "documents", "lire", "recherche", "assistant", "evaluation", "historique", "cypher", "mcp", "projets"];
+const ROUTES: Route[] = ["carte", "documents", "lire", "recherche", "assistant", "evaluation", "lacunes", "historique", "cypher", "mcp", "projets"];
 
 function readLocation(): Location {
   const [path, query = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
@@ -64,6 +65,7 @@ const NAV: { route: Route; label: string; icon: () => ReactElement }[] = [
   { route: "recherche", label: "Recherche", icon: () => <SearchIcon /> },
   { route: "assistant", label: "Assistant", icon: ChatIcon },
   { route: "evaluation", label: "Évaluation", icon: CheckIcon },
+  { route: "lacunes", label: "Lacunes", icon: GapIcon },
   { route: "historique", label: "Historique", icon: HistoryIcon },
   { route: "cypher", label: "Console Cypher", icon: ConsoleIcon },
   { route: "mcp", label: "MCP", icon: PlugIcon },
@@ -152,6 +154,8 @@ export default function App() {
         return <EvalView key={key} project={project} />;
       case "cypher":
         return <CypherView key={key} project={project} />;
+      case "lacunes":
+        return <GapsView key={key} project={project} />;
       case "mcp":
         return <McpView key={key} project={project} params={location.params} />;
       default:

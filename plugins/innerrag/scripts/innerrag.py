@@ -151,14 +151,47 @@ def cmd_search(args):
         "include_drafts": args.include_drafts,
         "tags": tags_arg(args.tags) or [],
         "use_graph": not args.no_graph,
+        "mode": "map" if args.map else None,
+        "budget": args.budget,
+        "session_id": args.session or os.environ.get("INNERRAG_SESSION"),
     })
-    if args.context:
+    if args.context or args.map:
         sys.stdout.write(res["context"])
-        sys.stdout.write("\n## Sources\n")
-        for n, c in enumerate(res["chunks"], 1):
-            sys.stdout.write(f"[{n}] {c['doc_title']} (doc `{c['doc_id']}`, {c['doc_status']})\n")
+        if not args.map and not args.budget:
+            sys.stdout.write("\n## Sources\n")
+            for n, c in enumerate(res["chunks"], 1):
+                sys.stdout.write(f"[{n}] {c['doc_title']} (doc `{c['doc_id']}`, chunk `{c['id']}`, {c['doc_status']})\n")
     else:
         out(res)
+
+
+def cmd_read(args):
+    res = call("POST", p(args, "/passages"), {
+        "ids": args.ids,
+        "window": args.window,
+        "session_id": args.session or os.environ.get("INNERRAG_SESSION"),
+    })
+    sys.stdout.write(res["text"])
+
+
+def cmd_cite(args):
+    call("POST", p(args, "/feedback/cite"), {"question": args.question, "chunk_ids": args.ids, "outcome": args.outcome})
+    print("recorded")
+
+
+def cmd_gaps(args):
+    res = call("GET", p(args, "/feedback"))
+    if args.json:
+        out(res)
+        return
+    print(f"{res['searches']} searches, {res['unanswered_searches']} without a relevant passage, {res['citations']} cited answers")
+    print("\nUnanswered questions:")
+    for g in res["gaps"]:
+        print(f"- ({g['count']}x) {g['question']}" + (f"  [also: {'; '.join(g['variants'][:3])}]" if g["variants"] else ""))
+    print("\nCited answers not yet in eval.json:")
+    for pr in res["proposals"]:
+        where = ", ".join(f"{c['doc_title']}" + (f" p.{c['page']}" if c["page"] else "") for c in pr["passages"])
+        print(f"- {pr['question']} -> {where}")
 
 
 def cmd_ingest(args):
@@ -321,7 +354,26 @@ def main():
     s.add_argument("--include-drafts", action="store_true")
     s.add_argument("--no-graph", action="store_true", help="plain vector search, for comparison")
     s.add_argument("--context", action="store_true", help="print the markdown context instead of JSON")
+    s.add_argument("--map", action="store_true", help="one line per passage (about 3x fewer tokens); unfold with `read`")
+    s.add_argument("--budget", type=int, help="maximum context size in tokens")
+    s.add_argument("--session", help="session id: passages already sent are not repeated (or INNERRAG_SESSION)")
     s.set_defaults(fn=cmd_search)
+
+    s = sub.add_parser("read", help="full text of passages by chunk id, with --window neighbours")
+    s.add_argument("ids", nargs="+")
+    s.add_argument("--window", type=int, default=0)
+    s.add_argument("--session")
+    s.set_defaults(fn=cmd_read)
+
+    s = sub.add_parser("cite", help="report the passages an answer used (feeds eval proposals and the gap report)")
+    s.add_argument("question")
+    s.add_argument("ids", nargs="*", help="chunk ids used")
+    s.add_argument("--outcome", choices=["answered", "partial", "not_found"], default="answered")
+    s.set_defaults(fn=cmd_cite)
+
+    s = sub.add_parser("gaps", help="unanswered questions and cited answers awaiting validation")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_gaps)
 
     s = sub.add_parser("ingest", help="add or replace documents (pdf, docx, pptx, doc, ppt, md, txt) from files, folders or stdin")
     s.add_argument("paths", nargs="*")

@@ -547,3 +547,18 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .legend-strength figcaption { font-weight: 600; font-size: 13px; }
 .legend-ramp { display: block; height: 8px; border-radius: 4px; }
 .legend-ramp-labels { display: flex; justify-content: space-between; color: var(--ink-2); }
+
+/* ---- Gaps and cited answers ---- */
+.gaps-totals { margin: 0; }
+.gaps-layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.gaps-col { flex: 1 1 420px; min-width: 0; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.gaps-col p.muted { font-size: 14px; margin-top: 4px; }
+.gaps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.gaps-list > li { padding: 14px 0; border-top: 1px solid var(--rule-soft); display: flex; flex-direction: column; gap: 6px; }
+.gaps-item-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.gaps-count { flex: none; font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+.gaps-variants { font-size: 13.5px; }
+.gaps-meta { font-size: 13px; color: var(--ink-soft); }
+.gaps-passages { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.empty-line { color: var(--ink-soft); font-size: 14px; padding: 8px 0; }
+.gaps-totals > div { flex: 0 0 auto; padding: 0 18px; }

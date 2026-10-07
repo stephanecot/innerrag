@@ -39,7 +39,7 @@ export async function health(bridge: string, signal?: AbortSignal): Promise<Brid
 /** Sends one message and calls `onEvent` for each event until Claude has finished. */
 export async function send(
   bridge: string,
-  body: { project: string; message: string; session?: string | null; model?: string; strict?: boolean },
+  body: { project: string; message: string; session?: string | null; model?: string; strict?: boolean; conversation?: string },
   onEvent: (e: BridgeEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

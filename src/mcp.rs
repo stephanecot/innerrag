@@ -16,7 +16,7 @@ use crate::history::{count, Call};
 use crate::ingest::{IngestRequest, Mode, Status};
 use crate::jobs::{Job, Stage};
 use crate::search::SearchRequest;
-use crate::{explore, ingest, search, AppState, Invalid};
+use crate::{context, explore, ingest, search, AppState, Invalid};
 use base64::Engine as _;
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -137,11 +137,41 @@ fn tools(with_project_arg: bool) -> Value {
                     "k": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Number of passages (default 8)." },
                     "min_score": { "type": "number", "minimum": 0, "maximum": 1, "description": "Minimum similarity of a passage (default: server setting, 0.80). Lower it to cast a wider net, 0 disables the filter." },
                     "tags": { "type": "array", "items": { "type": "string" }, "description": "Only documents carrying one of these tags." },
-                    "include_drafts": { "type": "boolean", "description": "Also search DRAFT documents (default false)." }
+                    "include_drafts": { "type": "boolean", "description": "Also search DRAFT documents (default false)." },
+                    "mode": { "type": "string", "enum": ["full", "map"], "description": "full (default): the passages in full. map: one line per passage (id, heading path, page, score, its sentence closest to the question), a fraction of the tokens; then read only the passages you need with read_passages." },
+                    "budget": { "type": "integer", "minimum": 100, "description": "Maximum size of the answer in tokens; lower-ranked passages are left out (and counted)." },
+                    "session_id": { "type": "string", "description": "Any id stable for your task or conversation: passages already sent in this session are not repeated." }
                 },
                 "required": ["query"]
             },
             "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "read_passages",
+            "description": "Full text of passages by id (the chunk ids given by search_knowledge), with optional neighbouring passages for context. Use it after a search in map mode, or to read around a passage.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Passage (chunk) ids." },
+                    "window": { "type": "integer", "minimum": 0, "maximum": 3, "description": "Neighbouring passages to add on each side (default 0)." },
+                    "session_id": { "type": "string", "description": "Same session id as your searches." }
+                },
+                "required": ["ids"]
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "cite_sources",
+            "description": "Call once when you have answered a question from this knowledge base: report the passages your answer actually relied on (chunk ids), or that the base did not answer it. This feeds the reference questions and the documentation-gap report; it does not change the documents.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string", "description": "The user's question, as asked." },
+                    "chunk_ids": { "type": "array", "items": { "type": "string" }, "description": "Ids of the passages used (empty when not_found)." },
+                    "outcome": { "type": "string", "enum": ["answered", "partial", "not_found"], "description": "answered: the passages answer it; partial: only part of it; not_found: the base does not cover it." }
+                },
+                "required": ["question", "outcome"]
+            }
         },
         {
             "name": "explore_entity",
@@ -380,6 +410,12 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
             args.get("b").and_then(Value::as_str).unwrap_or_default()
         ),
         "run_cypher" => args.get("query").and_then(Value::as_str).unwrap_or_default().to_string(),
+        "read_passages" => arg_strings(args, "ids").unwrap_or_default().join(", "),
+        "cite_sources" => format!(
+            "{} ({})",
+            args.get("question").and_then(Value::as_str).unwrap_or_default(),
+            args.get("outcome").and_then(Value::as_str).unwrap_or_default()
+        ),
         _ => String::new(),
     };
     let operation = match name {
@@ -388,11 +424,13 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
         "list_documents" => "list_documents",
         "graph_stats" => "stats",
         "run_cypher" => "cypher",
+        "read_passages" => "read",
+        "cite_sources" => "cite",
         _ => "unknown",
     };
     let call = Call::start("mcp", project, operation, detail);
     let mut result_line = String::new();
-    let outcome = run_tool(state, &graph, name, args, &mut result_line);
+    let outcome = run_tool(state, &graph, project, name, args, &mut result_line);
     call.finish(&state.history, &outcome, |text| (result_line.clone(), text.len()));
     outcome
 }
@@ -400,6 +438,7 @@ fn call_read_tool(state: &AppState, project: &str, name: &str, args: &Value) -> 
 fn run_tool(
     state: &AppState,
     graph: &crate::db::Graph,
+    project: &str,
     name: &str,
     args: &Value,
     result_line: &mut String,
@@ -415,17 +454,38 @@ fn run_tool(
                 include_drafts: args.get("include_drafts").and_then(Value::as_bool),
                 tags: arg_strings(args, "tags"),
                 min_score: args.get("min_score").and_then(Value::as_f64),
+                mode: None,
+                budget: None,
+                session_id: None,
             };
             let res = search::search(state, graph, req)?;
+            crate::feedback::record_search(graph, &res.query, "mcp", res.chunks.iter().map(|c| c.id.clone()).collect(), res.best_similarity);
             *result_line = count(res.chunks.len(), "passage", "passages");
-            let mut out = res.context;
+            let opts = context::Options {
+                mode: context::Mode::parse(args.get("mode").and_then(Value::as_str))?,
+                budget: args.get("budget").and_then(Value::as_u64).map(|b| b as usize),
+                session: args.get("session_id").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string),
+            };
+            let mut out = context::render(state, project, &res, &opts)?;
             if !res.chunks.is_empty() {
-                out.push_str("\n## Sources\n");
-                for (n, c) in res.chunks.iter().enumerate() {
-                    let _ = writeln!(out, "[{}] {} — doc `{}`, chunk `{}`", n + 1, c.doc_title, c.doc_id, c.id);
-                }
+                out.push_str("\nWhen you have answered, report the passage ids you used with cite_sources.\n");
             }
             Ok(out)
+        }
+        "read_passages" => {
+            let ids = arg_strings(args, "ids").unwrap_or_default();
+            let window = args.get("window").and_then(Value::as_i64).unwrap_or(0);
+            let session = args.get("session_id").and_then(Value::as_str).filter(|s| !s.is_empty());
+            *result_line = count(ids.len(), "passage", "passages");
+            context::read_passages(graph, project, &ids, window, session)
+        }
+        "cite_sources" => {
+            let question = arg_str(args, "question")?;
+            let outcome = crate::feedback::Outcome::parse(&arg_str(args, "outcome")?)?;
+            let ids = arg_strings(args, "chunk_ids").unwrap_or_default();
+            crate::feedback::cite(graph, &question, ids.clone(), outcome, "mcp")?;
+            *result_line = count(ids.len(), "passage cité", "passages cités");
+            Ok("Thanks, recorded.".into())
         }
         "explore_entity" => {
             let name = arg_str(args, "name")?;

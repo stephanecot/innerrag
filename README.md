@@ -138,7 +138,16 @@ Corps d'un document texte : `{"text","title?","id?","source?","tags?":[],"status
 - `POST /mcp` : projet par défaut ; chaque outil accepte un argument `project`, et `list_projects` liste les projets.
 - `POST /mcp/{project}` : lié à un projet.
 
-Outils : `search_knowledge`, `explore_entity`, `explore_relation`, `ingest_document` (texte), `ingest_file` (fichier en base64), `ingestion_status`, `list_documents`, `graph_stats`, `run_cypher`. Les ingestions répondent tout de suite avec un job, sauf avec `wait: true` (attente jusqu'à 2 minutes).
+Outils : `search_knowledge`, `read_passages`, `cite_sources`, `explore_entity`, `explore_relation`, `ingest_document` (texte), `ingest_file` (fichier en base64), `ingestion_status`, `list_documents`, `graph_stats`, `run_cypher`. Les ingestions répondent tout de suite avec un job, sauf avec `wait: true` (attente jusqu'à 2 minutes).
+
+Contexte à la taille voulue (`search_knowledge`, et `POST /api/projects/{p}/search` en REST) :
+
+- `mode: "map"` : une ligne par passage (identifiant, titres, page, score, phrase la plus proche de la question), environ trois fois moins de tokens ; `read_passages(ids, window)` déplie ensuite les passages utiles, avec leurs voisins.
+- `budget` : plafond en tokens ; les passages moins bien classés sont écartés et comptés.
+- `session_id` : un passage déjà envoyé dans la session n'est pas renvoyé.
+- Les passages quasi identiques (cosinus ≥ 0,95) sont toujours écartés.
+
+Boucle de citation : une fois sa réponse écrite, l'agent appelle `cite_sources(question, chunk_ids, outcome)`. La page « Lacunes » regroupe par sens les questions restées sans réponse (recherches sans passage pertinent et signalements des agents) et propose les réponses citées comme questions de référence pour `eval.json`. Recherches et citations sont enregistrées dans `feedback.jsonl`, dans le dossier du projet.
 
 ```bash
 claude mcp add --transport http innerrag http://localhost:8080/mcp/mon-projet

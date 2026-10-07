@@ -103,6 +103,8 @@ export const STATUS_LABEL = { PUBLISHED: "Publié", DRAFT: "Brouillon" } as cons
 
 export const OPERATION_LABEL: Record<string, string> = {
   search: "Recherche",
+  read: "Lecture de passages",
+  cite: "Sources citées",
   ingest: "Ingestion",
   replace: "Remplacement",
   update: "Métadonnées",

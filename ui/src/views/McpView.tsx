@@ -7,8 +7,18 @@ import { num } from "../util";
 const GUIDE: Record<string, { short: string; what: string; when: string }> = {
   search_knowledge: {
     short: "Trouver les passages qui répondent à une question",
-    what: "Le point d'entrée de presque toute question. Combine la recherche par le sens, par les mots-clés et par le graphe d'entités, puis renvoie les passages au-dessus du seuil, avec leur document, leur page et les entités liées.",
+    what: "Le point d'entrée de presque toute question. Combine la recherche par le sens, par les mots-clés et par le graphe d'entités, puis renvoie les passages au-dessus du seuil, avec leur document, leur page et les entités liées. En mode map, une ligne par passage (environ trois fois moins de tokens) ; budget plafonne la taille ; session_id évite de renvoyer deux fois le même passage.",
     when: "Dès qu'une question porte sur le contenu des documents.",
+  },
+  read_passages: {
+    short: "Lire des passages en entier",
+    what: "Le texte complet de passages désignés par leur identifiant, avec si besoin les passages voisins pour le contexte.",
+    when: "Après une recherche en mode map, pour déplier seulement ce qui sert.",
+  },
+  cite_sources: {
+    short: "Dire quels passages ont servi",
+    what: "L'agent indique, une fois sa réponse écrite, les passages sur lesquels elle repose, ou que la base ne répondait pas. Cela alimente la page Lacunes et propose des questions pour le jeu d'évaluation ; les documents ne changent pas.",
+    when: "À la fin de chaque réponse tirée de la base.",
   },
   explore_entity: {
     short: "Voisins et passages d'une entité",
@@ -58,7 +68,7 @@ const GUIDE: Record<string, { short: string; what: string; when: string }> = {
 };
 
 const GROUPS: { title: string; intro: string; tools: string[] }[] = [
-  { title: "Chercher", intro: "Ce que l'agent appelle le plus souvent.", tools: ["search_knowledge"] },
+  { title: "Chercher", intro: "Ce que l'agent appelle le plus souvent.", tools: ["search_knowledge", "read_passages", "cite_sources"] },
   {
     title: "Explorer le graphe",
     intro: "Pour suivre les liens entre entités au-delà des passages trouvés.",

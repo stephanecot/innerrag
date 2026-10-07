@@ -338,6 +338,10 @@ export const api = {
       }) =>
         request<SearchResponse>(`${base}/search`, { method: "POST", body: JSON.stringify(body) }),
       eval: () => request<EvalSet>(`${base}/eval`),
+      feedback: () => request<FeedbackReport>(`${base}/feedback`),
+      dismissFeedback: (key: string) => request<void>(`${base}/feedback/dismiss`, { method: "POST", body: JSON.stringify({ key }) }),
+      acceptFeedback: (key: string, out_of_scope = false) =>
+        request<EvalSet>(`${base}/feedback/accept`, { method: "POST", body: JSON.stringify({ key, out_of_scope }) }),
       saveEval: (set: EvalSet) => request<EvalSet>(`${base}/eval`, { method: "PUT", body: JSON.stringify(set) }),
       runEval: (body: { k?: number; min_scores?: number[] }) =>
         request<EvalReport>(`${base}/eval/run`, { method: "POST", body: JSON.stringify(body) }),
@@ -348,6 +352,34 @@ export const api = {
 };
 
 export type ProjectApi = ReturnType<typeof api.project>;
+
+export interface Gap {
+  key: string;
+  question: string;
+  variants: string[];
+  count: number;
+  unanswered_searches: number;
+  reported: number;
+  last_at: number;
+  best_similarity: number | null;
+}
+
+export interface Proposal {
+  key: string;
+  question: string;
+  count: number;
+  last_at: number;
+  partial: boolean;
+  passages: { id: string; doc_id: string; doc_title: string; page: number | null; excerpt: string }[];
+}
+
+export interface FeedbackReport {
+  searches: number;
+  unanswered_searches: number;
+  citations: number;
+  gaps: Gap[];
+  proposals: Proposal[];
+}
 
 export interface McpTool {
   name: string;

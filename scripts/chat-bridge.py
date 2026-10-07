@@ -35,6 +35,8 @@ from urllib.parse import urlsplit
 
 READ_TOOLS = [
     "search_knowledge",
+    "read_passages",
+    "cite_sources",
     "explore_entity",
     "explore_relation",
     "list_documents",
@@ -46,15 +48,20 @@ READ_TOOLS = [
 WRITE_TOOLS = ["ingest_document", "ingest_file"]
 PROJECT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")
+CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_MESSAGE = 20_000
 
 MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{0,63}$")
 
 SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`.
-Call the innerrag tools (search_knowledge first, explore_entity and explore_relation to follow
-the graph) before answering. Cite your sources as "document title, page N" when the passage
-gives a page. Keep answers short and structured, in Markdown, in the language of the question.
-{grounding}"""
+Call the innerrag tools before answering: search_knowledge first (mode "map" to survey a broad
+question cheaply, then read_passages for the passages you need), explore_entity and
+explore_relation to follow the graph. Always pass session_id "{conversation}" so passages are not
+sent twice. Cite your sources as "document title, page N" when the passage gives a page. Keep
+answers short and structured, in Markdown, in the language of the question.
+{grounding}
+Once your answer is written, call cite_sources once with the user's question, the ids of the
+passages you relied on, and the outcome (answered, partial or not_found)."""
 
 # Default: the answer must come from the documents only.
 STRICT = """Answer ONLY from the passages returned by the innerrag tools. Never add facts, code,
@@ -106,7 +113,7 @@ class Bridge:
         self.allowed = [f"mcp__innerrag__{t}" for t in tools]
         self.denied = [] if args.allow_writes else [f"mcp__innerrag__{t}" for t in WRITE_TOOLS]
 
-    def command(self, project, session, model=None, strict=True):
+    def command(self, project, session, model=None, strict=True, conversation="default"):
         mcp = {
             "mcpServers": {
                 "innerrag": {"type": "http", "url": f"{self.args.innerrag.rstrip('/')}/mcp/{project}"}
@@ -119,7 +126,7 @@ class Bridge:
             "--mcp-config", json.dumps(mcp), "--strict-mcp-config",
             "--allowedTools", ",".join(self.allowed),
             "--setting-sources", "",
-            "--append-system-prompt", SYSTEM_PROMPT.format(project=project, grounding=STRICT if strict else OPEN),
+            "--append-system-prompt", SYSTEM_PROMPT.format(project=project, grounding=STRICT if strict else OPEN, conversation=conversation),
         ]
         if self.denied:
             cmd += ["--disallowedTools", ",".join(self.denied)]
@@ -263,11 +270,14 @@ class Handler(BaseHTTPRequestHandler):
         if model is not None and not MODEL.match(str(model)):
             return self.json(400, {"error": "invalid model name"})
         strict = body.get("strict", True) is not False
+        conversation = str(body.get("conversation") or "default")
+        if not CONVERSATION_ID.match(conversation):
+            return self.json(400, {"error": "invalid conversation id"})
         if self.bridge.version is None:
             return self.json(503, {"error": f"`{self.bridge.args.claude}` not found or not working on this machine"})
-        self.stream(project, message, session, model, strict)
+        self.stream(project, message, session, model, strict, conversation)
 
-    def stream(self, project, message, session, model, strict):
+    def stream(self, project, message, session, model, strict, conversation):
         self.send_response(200)
         self.cors()
         self.send_header("Content-Type", "application/x-ndjson")
@@ -276,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
-        cmd = self.bridge.command(project, session, model, strict)
+        cmd = self.bridge.command(project, session, model, strict, conversation)
         try:
             proc = subprocess.Popen(
                 cmd, cwd=self.bridge.workdir, env=self.bridge.env(), stdin=subprocess.PIPE,

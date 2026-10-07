@@ -14,17 +14,28 @@ Pass `-p <project>` to target another project; `$CLI projects` lists them.
 
 ## Steps
 
-1. Retrieve context (markdown, ready to read):
+1. Survey first, cheaply (one line per passage: chunk id, heading path, page, best sentence):
    ```bash
-   python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" search "<question in the user's words>" --context -k 8
+   python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" search "<question in the user's words>" --map -k 10 --session <task-id>
    ```
-   Options: `--tags a,b` to restrict to tagged documents, `--include-drafts` to also read DRAFT
-   documents (only PUBLISHED ones by default — say so if you use it), `-p <project>`.
-2. Answer **only** from the returned passages. Cite them as `[n]` and end with the sources
+   Then read only the passages you need, with their neighbours when the context matters:
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" read <chunk id> <chunk id> --window 1 --session <task-id>
+   ```
+   For a narrow question, `search "<q>" --context -k 5` gives the passages in full at once.
+   Use one `--session` id per task (any string): passages already sent are not repeated.
+   Options: `--budget N` caps the context in tokens, `--tags a,b` restricts to tagged documents,
+   `--include-drafts` also reads DRAFT documents (only PUBLISHED by default — say so if you use
+   it), `-p <project>`.
+2. Answer **only** from the passages read. Cite them as `[n]` and end with the sources
    (document titles, with the page for PDFs: passages carry "page N"). If the passages do not
    answer, say what is missing instead of guessing. The user can read a document in the web UI
    at `$INNERRAG_URL/#/lire?doc=<doc id>&page=<N>`.
-3. When the answer depends on a relation between entities (who funded what, which team owns
+3. Report what your answer relied on — it builds the evaluation set and the gap report:
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/../../scripts/innerrag.py" cite "<the user's question>" <chunk ids used> --outcome answered|partial|not_found
+   ```
+4. When the answer depends on a relation between entities (who funded what, which team owns
    which system…), follow it with the explore skill: `... entity "<name>"`.
 
 ## Tips
