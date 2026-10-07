@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DocumentSummary } from "../api";
-import { href } from "../App";
 import { DEFAULT_BRIDGE, health, send, type BridgeEvent, type BridgeHealth } from "../chat";
-import { Blocks, parse, type Linker } from "../markdown";
+import RichText from "../RichText";
 import { locale, translate, useT, type Key, type T } from "../i18n";
 import { num } from "../util";
 
@@ -111,29 +110,6 @@ function isCitationNote(parts: Part[], k: number): boolean {
 
 const tokens = (text: string) => Math.ceil(text.length / 4);
 
-/** Links each cited document title, with its page when one follows ("Pro Android 5, page 486"), to the reader. */
-function citationLinker(docs: DocumentSummary[]): Linker | undefined {
-  const titled = docs.filter((d) => d.title.trim().length >= 3).sort((a, b) => b.title.length - a.title.length);
-  if (!titled.length) return undefined;
-  const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const byTitle = new Map(titled.map((d) => [d.title.toLowerCase(), d.id]));
-  const re = new RegExp(`(${titled.map((d) => escape(d.title)).join("|")})(,?\\s*(?:page|p\\.)\\s*(\\d+))?`, "gi");
-  return (text, key) => {
-    const out: ReactNode[] = [];
-    let last = 0;
-    let n = 0;
-    for (const m of text.matchAll(re)) {
-      const doc = byTitle.get(m[1].toLowerCase());
-      if (!doc || m.index === undefined) continue;
-      if (m.index > last) out.push(text.slice(last, m.index));
-      const params: Record<string, string> = m[3] ? { doc, page: m[3] } : { doc };
-      out.push(<a key={`${key}-${n++}`} href={href("lire", params)}>{m[0]}</a>);
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) out.push(text.slice(last));
-    return out;
-  };
-}
 
 export default function AssistantView({ project }: { project: string }) {
   const storageKey = `innerrag.chats.${project}`;
@@ -180,7 +156,7 @@ export default function AssistantView({ project }: { project: string }) {
   useEffect(() => {
     api.project(project).documents().then(setDocs).catch(() => setDocs([]));
   }, [project]);
-  const linker = useMemo(() => citationLinker(docs), [docs]);
+  const citedDocs = useMemo(() => docs.map((d) => ({ id: d.id, title: d.title })), [docs]);
 
   // Questions to start with, drawn from the project's own graph.
   useEffect(() => {
@@ -421,7 +397,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                 </ol>
               )}
               {x.parts.filter((p, k) => p.kind === "text" && !isCitationNote(x.parts, k)).map((p, j) => (
-                <div key={j} className="chat-text"><Blocks blocks={parse((p as { text: string }).text)} linker={linker} /></div>
+                <div key={j} className="chat-text"><RichText text={(p as { text: string }).text} docs={citedDocs} /></div>
               ))}
               {x.status === "running" && (
                 <p className="chat-wait" role="status">

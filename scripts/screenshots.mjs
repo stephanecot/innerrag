@@ -2,7 +2,7 @@
 // Captures the README screenshots from a running innerrag (and, for the assistant, its chat
 // bridge) with a headless Chrome driven over the DevTools protocol. Node 22+, no dependency.
 //
-//   node scripts/screenshots.mjs [--url http://localhost:18080] [--out docs/screenshots] [--lang fr] [--only carte,mcp]
+//   node scripts/screenshots.mjs [--url http://localhost:18080] [--out docs/screenshots] [--lang fr] [--only map,mcp] [--ask "question"]
 //
 // Each shot opens a page in a fresh tab with the project and language set in localStorage,
 // optionally acts on it (click, type), waits, then saves a PNG.
@@ -35,10 +35,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The page to capture: route, project, then actions in the page (JS run with helpers). */
 /** Questions typed in the search and assistant shots, in the interface language. */
-const ASK = {
+let ASK = {
   fr: { search: "Comment annuler une AsyncTask ?", assistant: "Quel rapport entre ACTION_MOVE et ACTION_UP ?" },
   en: { search: "How do I cancel an AsyncTask?", assistant: "How are ACTION_MOVE and ACTION_UP related?" },
 }[LANG] ?? { search: "How do I cancel an AsyncTask?", assistant: "How are ACTION_MOVE and ACTION_UP related?" };
+if (args.ask) ASK.assistant = args.ask;
 
 const SHOTS = [
   { name: "map", project: "sample", route: "#/carte", wait: 14000 },

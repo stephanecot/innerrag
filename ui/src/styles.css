@@ -614,3 +614,27 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .entity-doc-filter { flex: none; min-height: 36px; padding: 0 12px; font-size: 13px; }
 .map-doc select { max-width: 260px; text-overflow: ellipsis; }
 .map-doc-scope { font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--sunken); color: var(--ink-2); }
+
+/* ---- Rich answers (Markdown, HTML, SVG) ---- */
+.rich { line-height: 1.6; overflow-wrap: anywhere; }
+.rich > :first-child { margin-top: 0; }
+.rich > :last-child { margin-bottom: 0; }
+.rich p, .rich ul, .rich ol, .rich blockquote, .rich table, .rich pre, .rich figure { margin: 0 0 0.9em; }
+.rich ul, .rich ol { padding-left: 1.4em; }
+.rich li { margin: 0.2em 0; }
+.rich h1, .rich h2, .rich h3, .rich h4 { font-family: var(--font-display); line-height: 1.2; margin: 1em 0 0.4em; }
+.rich h1, .rich h2 { font-size: 20px; } .rich h3 { font-size: 17px; } .rich h4 { font-size: 15px; }
+.rich code { font-family: var(--font-mono); font-size: 0.9em; background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
+.rich pre { padding: 12px 14px; background: #1e2a33; color: #e6ebe4; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+.rich pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+.rich blockquote { padding: 8px 14px; border-left: 3px solid var(--c-event); background: var(--warn-bg); color: var(--warn-ink); border-radius: 0 8px 8px 0; }
+.rich table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; font-size: 14px; }
+.rich th, .rich td { border: 1px solid var(--rule); padding: 6px 10px; text-align: left; vertical-align: top; }
+.rich th { background: var(--sunken); font-weight: 600; }
+.rich hr { border: 0; border-top: 1px solid var(--rule); margin: 1.2em 0; }
+.rich img, .rich svg { max-width: 100%; height: auto; }
+.rich a { color: var(--link); }
+.rich-preview { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); overflow-x: auto; }
+.rich-preview svg { display: block; margin: 0 auto; }
+.rich-source { margin: -0.4em 0 0.9em; font-size: 13px; }
+.rich-source summary { cursor: pointer; color: var(--link); min-height: 28px; display: flex; align-items: center; }
