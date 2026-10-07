@@ -612,3 +612,5 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .entity-doc-bar span { display: block; height: 5px; background: var(--c-technology); }
 .entity-doc-meta { font-size: 13px; color: var(--ink-soft); }
 .entity-doc-filter { flex: none; min-height: 36px; padding: 0 12px; font-size: 13px; }
+.map-doc select { max-width: 260px; text-overflow: ellipsis; }
+.map-doc-scope { font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--sunken); color: var(--ink-2); }

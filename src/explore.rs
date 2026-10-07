@@ -565,6 +565,53 @@ pub fn graph(graph: &Graph, limit: usize, min_weight: i64, label: &str, include_
     Ok(GraphView { nodes, edges })
 }
 
+/// The map of one document: the entities it cites most, linked by the passages of that document
+/// that cite both (counts and strengths are computed within the document).
+pub fn document_graph(graph: &Graph, doc: &str, limit: usize, min_weight: i64, label: &str) -> Result<GraphView> {
+    let conn = graph.reader()?;
+    let nodes: Vec<EntitySummary> = rows(
+        &conn,
+        "MATCH (d:Document {id: $doc})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+         WHERE $label = '' OR e.label = $label
+         RETURN e.id, e.name, e.label, count(DISTINCT c) AS n, d.status
+         ORDER BY n DESC, e.name LIMIT $limit",
+        vec![("doc", s(doc)), ("label", s(label)), ("limit", db::i(limit.clamp(1, 2000) as i64))],
+    )?
+    .iter()
+    .map(|r| {
+        let n = as_i64(&r[3]);
+        EntitySummary {
+            id: as_str(&r[0]),
+            name: as_str(&r[1]),
+            label: as_str(&r[2]),
+            mentions: n,
+            published_mentions: if as_str(&r[4]) == "PUBLISHED" { n } else { 0 },
+        }
+    })
+    .collect();
+    let counts: HashMap<&str, i64> = nodes.iter().map(|n| (n.id.as_str(), n.mentions)).collect();
+    let ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+    let edges = rows(
+        &conn,
+        "MATCH (d:Document {id: $doc})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(a:Entity),
+               (c)-[:MENTIONS]->(b:Entity)
+         WHERE a.id < b.id AND a.id IN $ids AND b.id IN $ids
+         RETURN a.id, b.id, count(DISTINCT c) AS w",
+        vec![("doc", s(doc)), ("ids", db::strings(ids))],
+    )?
+    .iter()
+    .filter_map(|r| {
+        let (source, target, weight) = (as_str(&r[0]), as_str(&r[1]), as_i64(&r[2]));
+        if weight < min_weight {
+            return None;
+        }
+        let strength = strength(weight, counts.get(source.as_str()).copied()?, counts.get(target.as_str()).copied()?);
+        Some(Edge { source, target, weight, strength })
+    })
+    .collect();
+    Ok(GraphView { nodes, edges })
+}
+
 /// An entity, its strongest neighbours, and the relations among all of them.
 pub fn neighbourhood(graph: &Graph, id: &str, limit: usize) -> Result<GraphView> {
     let conn = graph.reader()?;

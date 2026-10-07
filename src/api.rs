@@ -602,6 +602,9 @@ struct GraphQuery {
     label: String,
     #[serde(default = "yes")]
     include_drafts: bool,
+    /// Only the entities of this document, linked within it.
+    #[serde(default)]
+    doc: String,
 }
 
 async fn graph(
@@ -611,9 +614,14 @@ async fn graph(
 ) -> ApiResult<explore::GraphView> {
     let limit = p.limit.unwrap_or(150);
     let min_weight = p.min_weight.unwrap_or(1);
-    let view =
-        in_project(&state, project, move |_, g| explore::graph(g, limit, min_weight, &p.label, p.include_drafts))
-            .await?;
+    let view = in_project(&state, project, move |_, g| {
+        if p.doc.is_empty() {
+            explore::graph(g, limit, min_weight, &p.label, p.include_drafts)
+        } else {
+            explore::document_graph(g, &p.doc, limit, min_weight, &p.label)
+        }
+    })
+    .await?;
     Ok(Json(view))
 }
 

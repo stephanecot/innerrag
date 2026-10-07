@@ -338,7 +338,7 @@ export const api = {
         request<EntitySummary[]>(`${base}/entities${qs(f)}`),
       entity: (id: string, doc?: string) => request<EntityDetail>(`${base}/entities/${enc(id)}${qs({ doc })}`),
       relation: (a: string, b: string) => request<RelationDetail>(`${base}/relation${qs({ a, b })}`),
-      graph: (f: { limit?: number; min_weight?: number; label?: string; include_drafts?: boolean }) =>
+      graph: (f: { limit?: number; min_weight?: number; label?: string; include_drafts?: boolean; doc?: string }) =>
         request<GraphView>(`${base}/graph${qs(f)}`),
       neighbourhood: (id: string, limit = 25) =>
         request<GraphView>(`${base}/graph/neighbourhood/${enc(id)}${qs({ limit })}`),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from "react-force-graph-2d";
-import { api, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
+import { api, type DocumentSummary, type EntityDetail, type GraphView, type RelationDetail, type Stats } from "../api";
 import { href } from "../App";
 import { CloseIcon, DocTypeIcon, SearchIcon } from "../Icons";
 import { translate, useT } from "../i18n";
@@ -62,6 +62,16 @@ export default function MapView({ project, params }: { project: string; params: 
   const [limit, setLimit] = useState(150);
   const [minWeight, setMinWeight] = useState(1);
   const [drafts, setDrafts] = useState(true);
+  // Map of one document (its entities, linked within it), remembered per project.
+  const mapDocKey = `innerrag.mapDoc.${project}`;
+  const [mapDoc, setMapDocState] = useState(() => {
+    try {
+      return localStorage.getItem(mapDocKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(params.get("entity"));
   const [detail, setDetail] = useState<EntityDetail | null>(null);
@@ -105,11 +115,12 @@ export default function MapView({ project, params }: { project: string; params: 
   // Dense graphs (one big document: everything co-occurs) are thinned automatically.
   const [autoWeight, setAutoWeight] = useState<number | null>(null);
   const autoDecided = useRef(false);
+  const refit = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, g] = await Promise.all([p.stats(), p.graph({ limit, min_weight: minWeight, include_drafts: drafts })]);
+      const [s, g] = await Promise.all([p.stats(), p.graph({ limit, min_weight: minWeight, include_drafts: drafts, doc: mapDoc || undefined })]);
       setStats(s);
       const decide = !autoDecided.current;
       autoDecided.current = true;
@@ -123,13 +134,45 @@ export default function MapView({ project, params }: { project: string; params: 
         }
       }
       merge(g, true);
+      // A new document's map is framed while its layout spreads out (the engine-stop event does
+      // not come reliably once the simulation has been reheated).
+      if (refit.current) {
+        refit.current = false;
+        fitted.current = true;
+        for (const delay of [1200, 3500, 7000]) setTimeout(() => fitRef.current(), delay);
+      }
       setError("");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [p, limit, minWeight, drafts, merge]);
+  }, [p, limit, minWeight, drafts, mapDoc, merge]);
+
+  useEffect(() => {
+    p.documents().then(setDocs).catch(() => setDocs([]));
+  }, [p]);
+
+  // A forgotten or deleted document falls back to the whole project.
+  useEffect(() => {
+    if (mapDoc && docs.length && !docs.some((d) => d.id === mapDoc)) setMapDoc("");
+  }, [docs, mapDoc]);
+
+  const setMapDoc = (id: string) => {
+    setMapDocState(id);
+    try {
+      localStorage.setItem(mapDocKey, id);
+    } catch {
+      /* storage unavailable */
+    }
+    // Each map decides its own thinning.
+    autoDecided.current = false;
+    refit.current = true;
+    setAutoWeight(null);
+    setMinWeight(1);
+    setSelected(null);
+  };
+  const mapDocTitle = docs.find((d) => d.id === mapDoc)?.title;
 
   useEffect(() => {
     load();
@@ -156,9 +199,9 @@ export default function MapView({ project, params }: { project: string; params: 
   }, [params, expand]);
 
   useEffect(() => {
-    setDocFilter(null);
+    setDocFilter(mapDoc || null);
     setAllNeighbours(false);
-  }, [selected]);
+  }, [selected, mapDoc]);
 
   useEffect(() => {
     if (!selected) {
@@ -199,6 +242,9 @@ export default function MapView({ project, params }: { project: string; params: 
       if (z > 3) fg.current?.zoom(3, 300);
     }, 550);
   }, []);
+  // `load` is declared before `fit`: it reaches it through this ref.
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
   useEffect(() => {
     fitted.current = false;
     const t = setTimeout(() => {
@@ -462,6 +508,15 @@ export default function MapView({ project, params }: { project: string; params: 
               {data.nodes.slice(0, 300).map((n) => <option key={String(n.id)} value={n.name} />)}
             </datalist>
           </form>
+          {docs.length > 1 && (
+            <label className="field-box map-doc">
+              {t("map.document")}
+              <select value={mapDoc} onChange={(e) => setMapDoc(e.target.value)}>
+                <option value="">{t("map.allDocs")}</option>
+                {docs.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}
+              </select>
+            </label>
+          )}
           <label className="field-box">
             {t("map.minLink")}
             <select value={minWeight} onChange={(e) => setMinWeight(Number(e.target.value))}>
@@ -487,6 +542,7 @@ export default function MapView({ project, params }: { project: string; params: 
             <strong>{project}</strong>
             <span className="muted" style={{ fontSize: 13 }}>{loading ? t("map.loading") : t("map.shown", { n: visible.nodes.length })}</span>
           </div>
+          {mapDocTitle && <p className="map-doc-scope">{t("map.docScope", { doc: mapDocTitle })}</p>}
           {stats && (
             <>
               <dl>
