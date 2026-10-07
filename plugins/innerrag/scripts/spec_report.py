@@ -4,6 +4,7 @@
 The analysis (done by the innerrag-spec-check skill) is a JSON file; this script only lays it
 out, always the same way, in French or English:
 
+  0. with "simulation": true, a banner and a SIMULATION watermark on every page;
   1. header: project, repository, commit, specifications compared, date;
   2. summary: compliance rate, counts per status, key points;
   3. requirements table: id, requirement, source, status, evidence;
@@ -34,6 +35,7 @@ from pathlib import Path
 
 STATUSES = ["compliant", "partial", "non_compliant", "not_verifiable"]
 SEVERITIES = ["blocker", "major", "minor"]
+FIX_IN = ["code", "spec", "both"]
 COLORS = {"compliant": "#2f7d3e", "partial": "#b7791f", "non_compliant": "#b42318", "not_verifiable": "#6b6f73"}
 
 LABELS = {
@@ -60,6 +62,11 @@ LABELS = {
         "expected": "Attendu",
         "found": "Constaté",
         "recommendation": "Recommandation",
+        "fix_in": "À corriger dans",
+        "fix_in_label": {"code": "le code", "spec": "la spécification", "both": "le code et la spécification"},
+        "finding": "Constat",
+        "simulation": "SIMULATION",
+        "simulation_note": "Rapport de démonstration : le code analysé est fictif, les preuves sont inventées.",
         "evidence": "Preuves",
         "severity": "Gravité",
         "unspecified": "Dans le code, absent des spécifications",
@@ -102,6 +109,11 @@ LABELS = {
         "expected": "Expected",
         "found": "Found",
         "recommendation": "Recommendation",
+        "fix_in": "To fix in",
+        "fix_in_label": {"code": "the code", "spec": "the specification", "both": "the code and the specification"},
+        "finding": "Finding",
+        "simulation": "SIMULATION",
+        "simulation_note": "Demonstration report: the code analysed is fictitious and the evidence is made up.",
         "evidence": "Evidence",
         "severity": "Severity",
         "unspecified": "In the code, missing from the specifications",
@@ -153,6 +165,7 @@ EXAMPLE = {
             "found": "Aucune action de suppression de carte : seul `deleteTask` existe, pour les tâches.",
             "evidence": [{"file": "src/store/useKanban.js", "line": 42, "note": "pas d'action deleteCard"}],
             "recommendation": "Ajouter une action `deleteCard` et un bouton avec confirmation dans `Card.jsx`.",
+            "fix_in": "code",
         },
     ],
     "unspecified": [
@@ -188,6 +201,8 @@ def validate(data):
             raise Invalid(f"{where}.status must be one of {', '.join(STATUSES)}")
         if r["status"] in ("partial", "non_compliant") and r.get("severity") not in SEVERITIES:
             raise Invalid(f"{where}.severity must be one of {', '.join(SEVERITIES)} for a {r['status']} requirement")
+        if r.get("fix_in") is not None and r["fix_in"] not in FIX_IN:
+            raise Invalid(f"{where}.fix_in must be one of {', '.join(FIX_IN)}")
         if not isinstance(r.get("source", {}), dict):
             raise Invalid(f"{where}.source must be an object")
         if not isinstance(r.get("evidence", []), list):
@@ -269,12 +284,18 @@ def render(data, lang):
     def row(r):
         text = r.get("text")
         detail = "<div class='req-text'>" + inline(text) + "</div>" if text and text != r["title"] else ""
+        # Gaps are detailed below; for the others the finding (why not verifiable, a reading choice) shows here.
+        finding = (
+            "<div class='finding'><b>" + L["finding"] + " :</b> " + inline(r["found"]) + "</div>"
+            if r.get("found") and r["status"] not in ("partial", "non_compliant")
+            else ""
+        )
         return (
             "<tr><td class='id'>" + html.escape(r["id"]) + "</td>"
             + "<td><b>" + inline(r["title"]) + "</b>" + detail + "</td>"
             + "<td class='src'>" + source_html(r.get("source", {})) + "</td>"
             + "<td>" + badge(L, r["status"]) + "</td>"
-            + "<td>" + evidence_html(r.get("evidence")) + "</td></tr>"
+            + "<td>" + evidence_html(r.get("evidence")) + finding + "</td></tr>"
         )
 
     rows = "".join(row(r) for r in reqs)
@@ -287,6 +308,9 @@ def render(data, lang):
     def card(r):
         sev = r.get("severity")
         source = source_html(r.get("source", {})).replace("<br>", ", ")
+        fix_in = (
+            "<dt>" + L["fix_in"] + "</dt><dd>" + L["fix_in_label"][r["fix_in"]] + "</dd>" if r.get("fix_in") else ""
+        )
         recommendation = (
             "<dt>" + L["recommendation"] + "</dt><dd>" + inline(r["recommendation"]) + "</dd>" if r.get("recommendation") else ""
         )
@@ -298,7 +322,7 @@ def render(data, lang):
             + "<dt>" + L["expected"] + "</dt><dd>" + inline(r.get("text") or r["title"]) + " <span class='muted'>— " + source + "</span></dd>"
             + "<dt>" + L["found"] + "</dt><dd>" + inline(r.get("found") or r.get("gap") or "—") + "</dd>"
             + "<dt>" + L["evidence"] + "</dt><dd>" + evidence_html(r.get("evidence")) + "</dd>"
-            + recommendation + "</dl></article>"
+            + recommendation + fix_in + "</dl></article>"
         )
 
     gap_cards = "".join(card(r) for r in gaps) or "<p class='muted'>" + L["no_gaps"] + "</p>"
@@ -319,6 +343,16 @@ def render(data, lang):
     commit_html = html.escape(commit) or "—"
     title = html.escape(str(data.get("title") or L["title"]))
     footer = html.escape(str(data.get("project", ""))) + " — " + title
+    simulated = data.get("simulation") is True
+    # Repeated on every printed page (fixed elements are), so no page can pass for a real audit.
+    simulation_html = (
+        "<div class='watermark' aria-hidden='true'>" + L["simulation"] + "</div>"
+        + "<p class='sim-banner'><b>" + L["simulation"] + "</b> — " + L["simulation_note"] + "</p>"
+        if simulated
+        else ""
+    )
+    if simulated and L["simulation"].lower() not in footer.lower():
+        footer = L["simulation"] + " — " + footer
 
     return f"""<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8"><title>{title}</title>
@@ -349,15 +383,19 @@ tr {{ break-inside: avoid; }}
 td.id, .id {{ font-weight: 700; white-space: nowrap; }}
 td.src {{ font-size: 8.5pt; color: #33424c; width: 30mm; }}
 .req-text {{ color: #33424c; font-size: 8.5pt; margin-top: 2pt; }}
+.finding {{ font-size: 8.5pt; color: #33424c; margin-top: 3pt; }}
 .badge {{ display: inline-block; color: #fff; font-size: 7.5pt; font-weight: 700; padding: 1.5pt 5pt; border-radius: 8pt; white-space: nowrap; }}
 .evidence {{ margin: 0; padding-left: 10pt; }} .evidence li {{ margin: 0 0 1pt; }} .note {{ color: #52616b; font-size: 8.5pt; }}
 .gap {{ border: 0.5pt solid #c6cfc3; border-left: 4pt solid; border-radius: 3pt; padding: 7pt 9pt; margin: 0 0 8pt; break-inside: avoid; }}
 .gap header {{ display: flex; gap: 6pt; align-items: baseline; }} .gap .right {{ margin-left: auto; white-space: nowrap; }}
 .gap dl {{ display: grid; grid-template-columns: 26mm 1fr; gap: 3pt 8pt; margin: 6pt 0 0; }} .gap dt {{ color: #6b6f73; }} .gap dd {{ margin: 0; }}
 .sev {{ font-size: 8pt; color: #33424c; margin-left: 4pt; }} .sev-blocker {{ color: #b42318; font-weight: 700; }}
+.watermark {{ position: fixed; top: 42%; left: 0; right: 0; text-align: center; transform: rotate(-30deg); font: 700 72pt Helvetica, Arial, sans-serif; color: rgba(180, 35, 24, 0.10); letter-spacing: 8pt; pointer-events: none; z-index: 0; }}
+.sim-banner {{ margin: 0 0 10pt; padding: 6pt 9pt; border: 1pt solid #b42318; border-radius: 3pt; color: #b42318; background: #fbedec; }}
 .unspecified {{ padding-left: 12pt; }} .unspecified li {{ margin-bottom: 4pt; }}
 </style></head>
 <body>
+{simulation_html}
 <section class="band">
   <h1>{title}</h1>
   <dl class="meta">
@@ -475,6 +513,7 @@ def main():
         sys.exit(f"unknown language {lang}: use fr or en")
 
     output = Path(args.output or (Path(args.analysis).with_suffix(".pdf") if args.analysis != "-" else "report.pdf"))
+    output.parent.mkdir(parents=True, exist_ok=True)
     html_path = Path(args.html) if args.html else output.with_suffix(".html")
     html_path.write_text(render(data, lang), encoding="utf-8")
     if print_pdf(html_path, output):

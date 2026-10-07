@@ -5,7 +5,7 @@ Configuration (environment):
   INNERRAG_URL      server URL (default http://localhost:8080)
   INNERRAG_PROJECT  project id (default: the server's default project)
 
-Every command prints JSON on stdout (or the markdown context for `search --context`).
+Commands print JSON on stdout, except `search --context`/`--map`, `read` and `content`, which print Markdown.
 Errors go to stderr with a non-zero exit code.
 """
 
