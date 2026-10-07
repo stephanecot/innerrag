@@ -1,213 +1,302 @@
 # innerrag
 
-Serveur **Graph RAG** 100 % local, écrit en Rust, construit sur **LadybugDB** (base graphe embarquée, fork de Kuzu). Tout tient dans une image Docker, modèles compris : aucun appel à une API externe, aucune dépense par requête.
+A **Graph RAG** server that runs entirely on your machine. It is written in Rust and built on **LadybugDB**, an embedded graph database forked from Kuzu. Everything ships in one Docker image, models included: no external API calls and no cost per query.
 
-- **Formats** : PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Markdown (front-matter compris), HTML et texte.
-- **Ingestion asynchrone** : extraction du texte, découpage qui suit les titres, embeddings multilingues (e5-small) et extraction d'entités zero-shot (GLiNER). Les entités citées dans un même passage sont reliées. La progression est suivie par job.
-- **Recherche hybride** : similarité sémantique, graphe d'entités et mots-clés (BM25), seuil de pertinence, reclassement par cross-encoder et cache. Le serveur renvoie un contexte prêt pour un agent, à la taille voulue (passages entiers, carte compacte, budget en tokens) ; il ne génère pas de réponse.
-- **Projets** cloisonnés : une base par projet, dans un dossier versionnable dans git.
-- **Documents** : statut `DRAFT` / `PUBLISHED`, créateur, tags, ajout, remplacement et suppression.
-- **Interfaces** : API REST, serveur **MCP** (HTTP), interface web React et plugin Claude Code (skills).
-- **Historique** des appels, avec le volume de contexte renvoyé (tokens estimés), la durée et les erreurs.
-- **Assistant** : discussion avec le Claude Code installé sur votre poste, branché sur le MCP du projet, sans clé d'API.
-- **Lacunes** : les questions restées sans réponse, et les réponses citées par les agents proposées comme questions de référence.
-- **Interface** en français et en anglais.
+- **Formats**: PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Markdown (front matter included), HTML and plain text.
+- **Asynchronous ingestion**:
+  - text extraction, then chunking that follows the headings;
+  - multilingual embeddings (e5-small) and zero-shot entity extraction (GLiNER);
+  - entities named in the same passage are linked;
+  - each ingestion is a job with visible progress, and pending jobs survive a restart.
+- **Hybrid search**:
+  - semantic similarity, the entity graph and keywords (BM25), with a relevance threshold, cross-encoder reranking and a cache;
+  - the server returns context ready for an agent, at the size you ask for (full passages, a compact map, or a token budget);
+  - it does not generate answers.
+- **Isolated projects**: one database per project, in a folder you can version with git.
+- **Documents**: `DRAFT` / `PUBLISHED` status, creator and tags; you can add, replace and delete them.
+- **Interfaces**: REST API, an **MCP** server (HTTP), a React web interface and a Claude Code plugin (skills).
+- **Call history**, with the size of the context returned (estimated tokens), the duration and the errors.
+- **Assistant**: chat with the Claude Code installed on your computer, connected to the project's MCP server, with no API key.
+- **Gaps**: the questions the knowledge base could not answer, and the answers agents cited, proposed as reference questions.
+- **Interface** in English and French.
 
-## Aperçu
+## Overview
 
-![Carte des entités : les liens sont colorés et épaissis selon leur force](docs/screenshots/carte.png)
+![Entity map: links are coloured and thickened by their strength](docs/screenshots/map.png)
 
 | | |
 |---|---|
-| ![Pourquoi ce lien ? Les passages qui citent les deux entités](docs/screenshots/lien.png) | ![Assistant : Claude Code local interroge la base et cite ses sources](docs/screenshots/assistant.png) |
-| **Pourquoi ce lien ?** Force du lien et passages qui citent les deux entités. | **Assistant** : le Claude Code local interroge la base par MCP et cite ses sources. |
-| ![Recherche : scores, seuil et apport du graphe](docs/screenshots/recherche.png) | ![Lecteur : le PDF converti en Markdown, avec ses pages](docs/screenshots/lecteur.png) |
-| **Recherche** : pertinence, mots-clés, et ce que le graphe a apporté. | **Lecteur** : le PDF converti en Markdown, avec sommaire et numéros de page. |
-| ![Lacunes : questions sans réponse et réponses citées](docs/screenshots/lacunes.png) | ![Outils MCP expliqués et essayables](docs/screenshots/mcp.png) |
-| **Lacunes** : ce que la base ne couvre pas, et les réponses à valider pour l'évaluation. | **MCP** : les outils vus par l'agent, expliqués et essayables. |
-| ![Documents](docs/screenshots/documents.png) | ![Historique des appels et tokens consommés](docs/screenshots/historique.png) |
-| **Documents** : type, statut, passages et entités. | **Historique** : chaque appel, son canal, sa durée et le contexte renvoyé. |
+| ![Why this link? The passages that cite both entities](docs/screenshots/link.png) | ![Assistant: the local Claude Code queries the knowledge base and cites its sources](docs/screenshots/assistant.png) |
+| **Why this link?** The strength of a link and the passages that cite both entities. | **Assistant**: the local Claude Code queries the knowledge base over MCP and cites its sources. |
+| ![Search: scores, threshold and what the graph added](docs/screenshots/search.png) | ![Reader: the PDF converted to Markdown, with its pages](docs/screenshots/reader.png) |
+| **Search**: relevance, keywords, and what the graph added. | **Reader**: the PDF converted to Markdown, with a table of contents and page numbers. |
+| ![Gaps: unanswered questions and cited answers](docs/screenshots/gaps.png) | ![MCP tools, explained and ready to try](docs/screenshots/mcp.png) |
+| **Gaps**: what the knowledge base does not cover, and the answers to validate for the evaluation set. | **MCP**: the tools as the agent sees them, explained and ready to try. |
+| ![Documents](docs/screenshots/documents.png) | ![Call history and tokens used](docs/screenshots/history.png) |
+| **Documents**: type, status, passages and entities. | **History**: every call, with its channel, duration and the context returned. |
 
-Captures régénérées par `node scripts/screenshots.mjs` (Chrome sans interface, serveur et pont lancés).
+To regenerate the screenshots, start the server and the chat bridge, then run `node scripts/screenshots.mjs --lang en`. The script drives a headless Chrome.
 
-## Démarrer
+## Getting started
 
 ```bash
-scripts/build.sh                    # Linux / macOS  (Windows : .\scripts\build.ps1)
-docker compose up -d                # ou : docker compose up -d --build
-open http://localhost:8080          # interface web
+scripts/build.sh                    # Linux / macOS  (Windows: .\scripts\build.ps1)
+docker compose up -d                # or: docker compose up -d --build
+open http://localhost:8080          # web interface
 ```
 
-Les scripts de build construisent une image Linux pour l'architecture de la machine. Options : `--platform amd64|arm64|all`, `--push`, `--tag`, `--save fichier.tar` pour un transfert hors-ligne. Côté PowerShell, ce sont les mêmes options avec `-Platform`, `-Push`, `-Tag` et `-Save`. Sous Windows, Docker Desktop doit être en mode « Linux containers ». Le premier build prend environ 10 minutes ; l'image pèse 1,6 Go (674 Mo compressée).
+The build scripts produce a Linux image for the machine's architecture.
 
-Le serveur n'a pas d'authentification (mono-utilisateur) : `docker-compose.yml` ne publie le port que sur `127.0.0.1`. Ne l'exposez que sur un réseau de confiance.
+- **Options**: `--platform amd64|arm64|all`, `--push`, `--tag`, and `--save file.tar` for an offline transfer. In PowerShell they are `-Platform`, `-Push`, `-Tag` and `-Save`.
+- **Windows**: Docker Desktop must be in "Linux containers" mode.
+- **Duration and size**: the first build takes about 10 minutes. The image is 1.6 GB (674 MB compressed).
 
-Le réseau n'est nécessaire qu'au build : modèles, ONNX Runtime et extension `vector` de LadybugDB sont intégrés à l'image. Au premier démarrage, un projet `default` est créé.
+The server has no authentication: it is single-user. `docker-compose.yml` therefore publishes the port on `127.0.0.1` only; expose it only on a network you trust.
 
-## Modèles embarqués
+The network is needed only at build time. The models, ONNX Runtime and LadybugDB's `vector` extension are baked into the image. On first start, a `default` project is created.
 
-| Rôle | Modèle | Fichier |
+## Bundled models
+
+| Role | Model | File |
 |---|---|---|
-| Embeddings (384 dim, FR/EN et 90+ langues) | `Xenova/multilingual-e5-small` | `onnx/model_quantized.onnx` (118 Mo) |
-| Entités (zero-shot, multilingue) | `onnx-community/gliner_multi-v2.1` | `onnx/model_fp16.onnx` (580 Mo) |
+| Embeddings (384 dimensions, English, French and 90+ languages) | `Xenova/multilingual-e5-small` | `onnx/model_quantized.onnx` (118 MB) |
+| Entities (zero-shot, multilingual) | `onnx-community/gliner_multi-v2.1` | `onnx/model_fp16.onnx` (580 MB) |
+| Reranking (cross-encoder, multilingual) | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | `onnx/model.onnx` |
 
-On peut les changer au build (`--build-arg EMBED_REPO=… EMBED_FILE=… NER_REPO=… NER_FILE=…`). La variante int8 de GLiNER est à éviter : ses scores s'effondrent (0,2 à 0,5 contre 0,9 et plus en fp16). Un projet retient le modèle d'embedding avec lequel il a été indexé, et le serveur refuse de l'ouvrir avec un autre.
+You can swap them at build time with `--build-arg EMBED_REPO=… EMBED_FILE=… NER_REPO=… NER_FILE=… RERANK_REPO=… RERANK_FILE=…`; an empty `RERANK_REPO` leaves the reranker out.
 
-## Configuration (variables d'environnement)
+- **Avoid the int8 variant of GLiNER**: its scores collapse (0.2 to 0.5, against 0.9 and above in fp16).
+- **Embedding model per project**: a project remembers the model it was indexed with, and the server refuses to open it with another one.
 
-| Variable | Défaut | Rôle |
+## Configuration (environment variables)
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `INNERRAG_DATA` | `/data` | Racine des données : `projects/<id>/` et `history/` |
-| `INNERRAG_DEFAULT_PROJECT` | `default` | Projet de `/mcp` et des appels sans projet |
-| `INNERRAG_USER` | `local` | Créateur enregistré sur les documents (mono-utilisateur) |
-| `INNERRAG_DEFAULT_STATUS` | `PUBLISHED` | Statut des nouveaux documents (`DRAFT` pour imposer une relecture) |
-| `INNERRAG_NER_LABELS` | `person,organization,location,event,product,technology` | Types d'entités extraits |
-| `INNERRAG_NER_THRESHOLD` | `0.5` | Seuil de confiance du NER |
-| `INNERRAG_CHUNK_SIZE` / `_OVERLAP` | `1000` / `150` | Taille des passages en caractères |
-| `INNERRAG_ENTITY_SEED_DISTANCE` | `0.18` | Distance cosinus max. pour qu'une entité proche de la question serve de point de départ |
-| `INNERRAG_BUFFER_POOL_MB` | `256` | Mémoire tampon de chaque base ouverte |
-| `INNERRAG_MAX_UPLOAD_MB` | `200` | Taille maximale d'une requête (fichier envoyé) |
-| `INNERRAG_KEEP_ORIGINALS` | `true` | Garder les fichiers envoyés dans `<projet>/files/` |
-| `INNERRAG_DEVICE` | `auto` | `auto`, `cuda` ou `cpu` (voir GPU) |
-| `INNERRAG_THREADS` | nb. de CPU | Threads des modèles et de la base |
+| `INNERRAG_DATA` | `/data` | Data root: `projects/<id>/` and `history/` |
+| `INNERRAG_BIND` | `0.0.0.0:8080` | Listen address |
+| `INNERRAG_DEFAULT_PROJECT` | `default` | Project of `/mcp` and of calls without a project |
+| `INNERRAG_USER` | `local` | Creator recorded on documents (single-user) |
+| `INNERRAG_DEFAULT_STATUS` | `PUBLISHED` | Status of new documents (`DRAFT` to require a review) |
+| `INNERRAG_NER_LABELS` | `person,organization,location,event,product,technology` | Entity types to extract |
+| `INNERRAG_NER_THRESHOLD` | `0.5` | Confidence threshold of the entity extraction |
+| `INNERRAG_ENTITY_STOPWORDS` | (empty) | Extra names never kept as entities, comma-separated |
+| `INNERRAG_CHUNK_SIZE` / `INNERRAG_CHUNK_OVERLAP` | `1000` / `150` | Passage size and overlap, in characters |
+| `INNERRAG_MIN_SCORE` | `0.80` | Minimum similarity for a passage to be returned |
+| `INNERRAG_RERANK` | `true` | Reorder results with the cross-encoder |
+| `INNERRAG_ENTITY_SEED_DISTANCE` | `0.18` | Maximum cosine distance for an entity close to the question to seed the graph search |
+| `INNERRAG_BUFFER_POOL_MB` | `256` | Buffer pool of each open database |
+| `INNERRAG_MAX_UPLOAD_MB` | `200` | Maximum request (uploaded file) size |
+| `INNERRAG_KEEP_ORIGINALS` | `true` | Keep uploaded files in `<project>/files/` |
+| `INNERRAG_WATCH_ROOT` / `INNERRAG_WATCH_INTERVAL` | `/watch` / `30` | Root of the watched folders, and seconds between scans |
+| `INNERRAG_DEVICE` | `auto` | `auto`, `cuda` or `cpu` (see GPU) |
+| `INNERRAG_THREADS` | number of CPUs | Threads for the models and the database |
 
-## Formats et ingestion
+## Formats and ingestion
 
 | Format | Extraction |
 |---|---|
-| PDF | Converti en Markdown à partir de la mise en page (`pdftohtml -xml`) : les titres sont déduits des tailles de police, les paragraphes recollés, le code repéré par la police à chasse fixe ; en-têtes, pieds et numéros de page sont retirés et des repères de page sont gardés. Si la mise en page est illisible, on retombe sur le texte brut (`pdftotext`). Les PDF scannés (images seules) sont refusés : pas d'OCR. |
-| Word `.docx` | Lu directement : titres (`Titre 1`, `Heading 1`…), listes, tableaux, titre du document |
-| PowerPoint `.pptx` | Une section par diapositive, dans l'ordre de la présentation, avec titre et notes de l'orateur |
-| `.doc`, `.ppt` (97-2003) | `catdoc` / `catppt` (texte brut) |
-| Markdown | Front-matter `title`, `tags`, `status` ; titres `#` |
-| HTML, texte | HTML converti en Markdown simple ; texte tel quel |
+| PDF | Converted to Markdown from the page layout (`pdftohtml -xml`) instead of raw text. See below. |
+| Word `.docx` | Read directly: headings (`Heading 1`…), lists, tables and the document title |
+| PowerPoint `.pptx` | One section per slide, in presentation order, with the title and the speaker notes |
+| `.doc`, `.ppt` (97-2003) | `catdoc` / `catppt` (plain text) |
+| Markdown | Front matter `title`, `tags`, `status`; `#` headings |
+| HTML, text | HTML converted to simple Markdown; text as is |
 
-Le texte extrait est conservé en entier (Markdown) pour la lecture, et l'original est gardé dans `files/` du projet (désactivable avec `INNERRAG_KEEP_ORIGINALS=false`). L'interface a un **lecteur** pleine page : sommaire par chapitres et texte mis en forme. Les numéros de page ouvrent le PDF original à la bonne page, et un onglet donne les passages indexés. Le texte est découpé en suivant les titres et, pour un PDF, sans chevaucher les pages : chaque passage connaît sa page, ce qui permet aux résultats de recherche de pointer vers « page 41 ». Chaque passage commence par son fil de titres (`Chapitre 3 › Installation`), ce qui garde le contexte au moment de la recherche.
+How a PDF is converted:
 
-**Toute ingestion est asynchrone** : l'appel renvoie `202` et un job, traité en file, un document à la fois. On suit sa progression (extraction, vectorisation, entités, écriture) sur `GET /api/jobs/{id}`, et l'interface l'affiche en haut de la page Documents. Ajouter `?wait=true` donne le comportement synchrone. Ordre de grandeur sur CPU (8 cœurs, arm64) : environ 0,25 s par passage, soit 8 à 9 minutes pour un livre PDF de 728 pages (1 959 passages). Les jobs sont gardés en mémoire : un redémarrage du serveur pendant une ingestion l'interrompt, et il faut renvoyer le fichier.
+- headings are inferred from font sizes, and paragraphs are joined back;
+- code is spotted by its monospaced font;
+- running headers, footers and page numbers are removed, and page markers are kept;
+- when the layout cannot be read, extraction falls back to plain text (`pdftotext`);
+- scanned PDFs (images only) are rejected: there is no OCR.
+
+**What is kept.** The extracted text is stored in full, as Markdown, for reading. The original file is kept in the project's `files/` folder (turn this off with `INNERRAG_KEEP_ORIGINALS=false`).
+
+**The reader.** It shows a table of contents by chapter and the formatted text. Page numbers open the original PDF at that page, and a tab lists the indexed passages.
+
+**Chunking.** Text is split along the headings and, for a PDF, never across pages: each passage knows its page, so search results can point to "page 41". Each passage also starts with its heading path (`Chapter 3 › Installation`), which keeps its context at search time.
+
+**Every ingestion is asynchronous.**
+
+- The call returns `202` with a job. Jobs are queued and processed one document at a time.
+- Progress (extraction, embeddings, entities, writing) is available on `GET /api/jobs/{id}`, and the interface shows it in a card at the bottom right.
+- Add `?wait=true` for a synchronous call.
+- Pending jobs are saved to disk and resume after a restart. A running job can be cancelled; in that case nothing is written.
+- Re-importing a document only recomputes the passages that changed (13 seconds instead of 11 minutes for an unchanged book).
+
+**Speed on CPU** (8 cores, arm64): about 0.25 s per passage, so 10 to 11 minutes for a 728-page PDF book (2,448 passages).
 
 ```bash
-curl -F "file=@rapport.pdf" -F "tags=finance,2026" -F "status=DRAFT" \
-     http://localhost:8080/api/projects/mon-projet/documents/upload
+curl -F "file=@report.pdf" -F "tags=finance,2026" -F "status=DRAFT" \
+     http://localhost:8080/api/projects/my-project/documents/upload
+```
+
+**Watched folders.** Mount a folder under `/watch` (for example a repository's `docs/`) and attach it to a project from the Projects page. Its files are imported, then kept in sync every 30 seconds; only changed passages are recomputed.
+
+```bash
+-v ./my-repo/docs:/watch/my-repo-docs:ro
 ```
 
 ## GPU (NVIDIA)
 
-Par défaut, l'image tourne sur CPU. Une variante **CUDA** fait tourner les deux modèles (embeddings et entités) sur une carte NVIDIA :
+By default the image runs on CPU. A **CUDA** variant runs both models (embeddings and entities) on an NVIDIA card:
 
 ```bash
-scripts/build.sh --gpu                 # ou .\scripts\build.ps1 -Gpu  → image innerrag:cuda (linux/amd64)
+scripts/build.sh --gpu                 # or .\scripts\build.ps1 -Gpu  → image innerrag:cuda (linux/amd64)
 docker run -d --gpus all -p 8080:8080 -v "$PWD/data:/data" innerrag:cuda
-# ou : docker compose --profile gpu up -d innerrag-gpu
+# or: docker compose --profile gpu up -d innerrag-gpu
 ```
 
-- Il faut un hôte Linux, ou Windows avec WSL2, une carte NVIDIA, un pilote récent (CUDA 12) et le NVIDIA Container Toolkit. **Docker sur macOS n'a pas accès au GPU** (Apple Silicon compris) : l'image CPU reste la seule option sur Mac.
-- `INNERRAG_DEVICE` vaut `auto` par défaut (GPU s'il est utilisable, sinon CPU, sans erreur). Les autres valeurs sont `cuda` (le GPU est exigé, échec sinon) et `cpu`. Le périphérique réellement utilisé est indiqué au démarrage, dans `/api/config` et dans l'interface.
-- L'image CUDA est plus lourde (+2 Go environ : ONNX Runtime GPU, cuBLAS, cuDNN). L'extraction d'entités, qui représente l'essentiel du temps d'ingestion, est celle qui gagne le plus.
+- **Requirements**: a Linux host, or Windows with WSL2, an NVIDIA card, a recent driver (CUDA 12) and the NVIDIA Container Toolkit.
+- **macOS**: Docker on macOS has no access to the GPU, Apple Silicon included. The CPU image is the only option on a Mac.
+- **`INNERRAG_DEVICE`**:
+  - `auto` (the default) uses the GPU when it is usable, otherwise the CPU, without an error;
+  - `cuda` requires the GPU and fails without it;
+  - `cpu` always uses the CPU.
 
-## Projets et partage via git
+  The device actually used is shown at startup, in `/api/config` and in the interface.
+- **Image size**: the CUDA image is about 2 GB larger (ONNX Runtime GPU, cuBLAS, cuDNN).
+- **Biggest gain**: entity extraction, which takes most of the ingestion time.
 
-Chaque projet est un dossier `/data/projects/<id>/` :
+## Projects and sharing through git
+
+Each project is a folder, `/data/projects/<id>/`:
 
 ```
-innerrag.lbdb   la base LadybugDB (un seul fichier)
-project.json    titre, description, modèle d'embedding
-files/          les fichiers originaux (PDF, Word…)
-.gitignore      fichiers temporaires
+innerrag.lbdb    the LadybugDB database (a single file)
+project.json     title, description, embedding model, watched folder
+eval.json        reference questions for the evaluation
+feedback.jsonl   searches and citations (Gaps page)
+files/           the original files (PDF, Word…)
+.gitignore       temporary files
 ```
 
-Le serveur fait un checkpoint après chaque écriture : le fichier `.lbdb` est toujours cohérent et peut être commité sans arrêter le serveur. Pour partager un projet dans un dépôt :
+The server checkpoints after every write, so the `.lbdb` file is always consistent and can be committed without stopping the server. To share a project in a repository:
 
 ```bash
 docker run -d -p 8080:8080 --user "$(id -u):$(id -g)" \
-  -v "$PWD/.innerrag:/data/projects/mon-projet" innerrag
-git add .innerrag && git commit -m "Base de connaissances"
+  -v "$PWD/.innerrag:/data/projects/my-project" innerrag
+git add .innerrag && git commit -m "Knowledge base"
 ```
 
-C'est un fichier binaire : git ne sait pas fusionner deux modifications parallèles. Convenez de qui ingère à quel moment.
+The database is a binary file, so git cannot merge two parallel changes. Agree on who ingests when.
 
-## API REST
+## REST API
 
-Toutes les routes de projet sont sous `/api/projects/{project}`.
+All project routes live under `/api/projects/{project}`.
 
-| Méthode | Route | Rôle |
+| Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/health`, `/api/config` | État, modèles, configuration |
-| GET, POST | `/api/projects` | Lister, créer (`{"id","title","description"}`) |
-| GET, PATCH, DELETE | `/api/projects/{p}` | Lire, renommer, supprimer |
-| GET | `…/stats`, `…/tags` | Compteurs, tags |
-| GET, POST | `…/documents` | Lister (`?status=&tag=&q=`), ajouter du texte JSON (409 si l'id existe) |
-| POST | `…/documents/upload` | Ajouter un fichier (multipart : `file`, et en option `title`, `id`, `tags`, `status`, `source`) |
-| GET, PUT, PATCH, DELETE | `…/documents/{id}` | Lire, remplacer par du texte (réindexe), modifier les métadonnées, supprimer |
-| PUT | `…/documents/{id}/upload` | Remplacer par un fichier |
-| GET | `…/documents/{id}/content` | Texte complet en Markdown (avec repères `<!-- page N -->` pour un PDF) |
-| GET | `…/documents/{id}/passages?offset=&limit=` | Passages indexés, paginés, avec leur page |
-| GET | `…/documents/{id}/file` | Fichier original (`#page=N` ouvre un PDF à la page voulue) |
-| GET | `/api/jobs?project=`, `/api/jobs/{id}` | Ingestions en cours et récentes |
-| DELETE | `/api/jobs/{id}` | Annuler une ingestion en attente ou en cours (rien n'est écrit) |
-| GET | `…/entities`, `…/entities/{id}` | Entités, voisinage et passages |
-| GET | `…/graph`, `…/graph/neighbourhood/{id}` | Sous-graphes pour la visualisation |
-| POST | `…/search` | `{"query","k","tags","include_drafts","use_graph"}` |
-| POST | `…/cypher` | Cypher en lecture seule |
-| GET | `/api/history` | Historique (`?hours=&channel=&operation=&project=&errors=`) |
+| GET | `/api/health`, `/api/config` | Status, models, configuration |
+| GET, POST | `/api/projects` | List, create (`{"id","title","description"}`) |
+| GET, PATCH, DELETE | `/api/projects/{p}` | Read, rename or set the watched folder (`watch_dir`), delete |
+| POST | `…/watch/scan` | Scan the watched folder now |
+| GET | `…/stats`, `…/tags` | Counts, tags |
+| GET, POST | `…/documents` | List (`?status=&tag=&q=`), add JSON text (409 if the id exists) |
+| POST | `…/documents/upload` | Add a file (multipart: `file`, and optionally `title`, `id`, `tags`, `status`, `source`) |
+| GET, PUT, PATCH, DELETE | `…/documents/{id}` | Read, replace with text (re-indexes), edit metadata, delete |
+| PUT | `…/documents/{id}/upload` | Replace with a file |
+| GET | `…/documents/{id}/content` | Full text as Markdown (with `<!-- page N -->` markers for a PDF) |
+| GET | `…/documents/{id}/passages?offset=&limit=` | Indexed passages, paginated, with their page |
+| GET | `…/documents/{id}/file` | Original file (`#page=N` opens a PDF at that page) |
+| GET | `/api/jobs?project=`, `/api/jobs/{id}` | Running and recent ingestions |
+| DELETE | `/api/jobs/{id}` | Cancel a queued or running ingestion (nothing is written) |
+| GET | `…/entities`, `…/entities/{id}?doc=` | Entities; an entity's neighbours, documents and passages (optionally from one document) |
+| GET | `…/relation?a=&b=` | Link between two entities: shared passages, strength |
+| GET | `…/graph`, `…/graph/neighbourhood/{id}` | Subgraphs for the map |
+| POST | `…/search` | `{"query","k","tags","include_drafts","use_graph","use_keywords","rerank","min_score","mode","budget","session_id"}` |
+| POST | `…/passages` | Full text of passages by id: `{"ids","window","session_id"}` |
+| GET, PUT | `…/eval`, POST `…/eval/run` | Reference questions, and a run with metrics (`{"k","min_scores"}`) |
+| GET | `…/feedback` | Gaps report: unanswered questions, cited answers |
+| POST | `…/feedback/cite`, `…/feedback/dismiss`, `…/feedback/accept` | Report the passages an answer used; set a question aside; add it to `eval.json` |
+| POST | `…/cypher` | Read-only Cypher |
+| GET, DELETE | `/api/history` | History (`?hours=&channel=&operation=&project=&errors=&offset=&limit=`); clear it (`?project=`) |
 
-Corps d'un document texte : `{"text","title?","id?","source?","tags?":[],"status?":"DRAFT|PUBLISHED","metadata?":{}}`. Les ajouts et remplacements renvoient `202` avec le job ; `?wait=true` renvoie le rapport d'ingestion.
+A text document body is `{"text","title?","id?","source?","tags?":[],"status?":"DRAFT|PUBLISHED","metadata?":{}}`. Adds and replacements return `202` with the job; `?wait=true` returns the ingestion report.
 
 ## MCP
 
-- `POST /mcp` : projet par défaut ; chaque outil accepte un argument `project`, et `list_projects` liste les projets.
-- `POST /mcp/{project}` : lié à un projet.
+- `POST /mcp`: the default project. Every tool accepts a `project` argument, and `list_projects` lists the projects.
+- `POST /mcp/{project}`: bound to one project.
 
-Outils : `search_knowledge`, `read_passages`, `cite_sources`, `explore_entity`, `explore_relation`, `ingest_document` (texte), `ingest_file` (fichier en base64), `ingestion_status`, `list_documents`, `graph_stats`, `run_cypher`. Les ingestions répondent tout de suite avec un job, sauf avec `wait: true` (attente jusqu'à 2 minutes).
+**Tools**:
 
-Contexte à la taille voulue (`search_knowledge`, et `POST /api/projects/{p}/search` en REST) :
+- search and read: `search_knowledge`, `read_passages`, `cite_sources`;
+- graph: `explore_entity`, `explore_relation`, `graph_stats`, `run_cypher`;
+- documents: `list_documents`, `ingest_document` (text), `ingest_file` (base64 file), `ingestion_status`.
 
-- `mode: "map"` : une ligne par passage (identifiant, titres, page, score, phrase la plus proche de la question), environ trois fois moins de tokens ; `read_passages(ids, window)` déplie ensuite les passages utiles, avec leurs voisins.
-- `budget` : plafond en tokens ; les passages moins bien classés sont écartés et comptés.
-- `session_id` : un passage déjà envoyé dans la session n'est pas renvoyé.
-- Les passages quasi identiques (cosinus ≥ 0,95) sont toujours écartés.
-- Cache par projet : une recherche identique (mêmes question et réglages, données inchangées) répond en moins d'une milliseconde au lieu d'environ 450 ms ; les scores du cross-encoder sont réutilisés quand seuls `k`, `mode` ou `budget` changent. Toute écriture invalide le cache. La réponse porte `cached: true`.
+Ingestions answer right away with a job, unless `wait: true` is passed (waits up to 2 minutes).
 
-Boucle de citation : une fois sa réponse écrite, l'agent appelle `cite_sources(question, chunk_ids, outcome)`. La page « Lacunes » regroupe par sens les questions restées sans réponse (recherches sans passage pertinent et signalements des agents) et propose les réponses citées comme questions de référence pour `eval.json`. Recherches et citations sont enregistrées dans `feedback.jsonl`, dans le dossier du projet.
+**Context at the size you need** (`search_knowledge`, and `POST /api/projects/{p}/search` over REST):
+
+- `mode: "map"` returns one line per passage: id, heading path, page, score, and the sentence closest to the question. It uses about three times fewer tokens. `read_passages(ids, window)` then unfolds the useful passages, with their neighbours.
+- `budget` caps the answer in tokens. Lower-ranked passages are left out, and counted.
+- `session_id` keeps a passage already sent in the session from being sent again.
+- Near-identical passages (cosine ≥ 0.95) are always dropped.
+- **Per-project cache**:
+  - a repeated search (same question and settings, unchanged data) answers in under a millisecond instead of about 450 ms;
+  - cross-encoder scores are reused when only `k`, `mode` or `budget` change;
+  - any write invalidates the cache;
+  - a cached answer carries `cached: true`.
+
+**Citation loop.** Once its answer is written, the agent calls `cite_sources(question, chunk_ids, outcome)`. The Gaps page then:
+
+- groups unanswered questions by meaning, from searches with no relevant passage and from agent reports;
+- proposes the cited answers as reference questions for `eval.json`.
+
+Searches and citations are recorded in the project folder's `feedback.jsonl`.
 
 ```bash
-claude mcp add --transport http innerrag http://localhost:8080/mcp/mon-projet
+claude mcp add --transport http innerrag http://localhost:8080/mcp/my-project
 ```
 
-## Assistant (Claude Code local, sans clé d'API)
+## Assistant (local Claude Code, no API key)
 
-La page « Assistant » de l'interface discute avec le Claude Code de votre poste, branché sur le MCP du projet ouvert. Le serveur tourne dans Docker et ne peut pas lancer ce Claude Code : un petit pont, sans dépendance, fait le lien sur la machine hôte.
+The interface's Assistant page chats with the Claude Code on your computer, connected to the open project's MCP server. The server runs in Docker and cannot start that Claude Code, so a small dependency-free bridge on the host makes the link:
 
 ```bash
 python3 scripts/chat-bridge.py            # macOS, Linux
 py scripts\chat-bridge.py                # Windows
 ```
 
-- Chaque message lance `claude -p` avec le seul serveur MCP innerrag (`--strict-mcp-config`), sans outils intégrés (ni terminal, ni fichiers) et sans les outils d'ingestion, sauf avec `--allow-writes`.
-- `ANTHROPIC_API_KEY` et `ANTHROPIC_AUTH_TOKEN` sont retirés de l'environnement : Claude Code utilise le compte avec lequel vous êtes connecté, et les messages comptent dans cet abonnement.
-- Le pont écoute sur `127.0.0.1:18765` et ne répond qu'aux pages de l'interface (contrôle de l'en-tête `Origin`).
-- Les conversations reprennent la session Claude Code (`--resume`) et restent dans le navigateur, par projet ; les appels MCP apparaissent dans l'historique.
-- Dans la page : choix du modèle (Opus, Sonnet, Haiku, ou celui de Claude Code) et interrupteur « Documents seulement », actif par défaut : Claude ne répond qu'à partir des passages trouvés et dit quand la base ne couvre pas la question. Désactivé, il peut compléter dans une partie « Hors documents ».
-- Options du pont : `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (modèle par défaut), `--allow-writes`.
+- **What Claude can do**:
+  - each message starts `claude -p` with the innerrag MCP server only (`--strict-mcp-config`);
+  - built-in tools (terminal, files) are turned off;
+  - the ingestion tools are left out unless you pass `--allow-writes`.
+- **Account**: `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the environment, so Claude Code uses the account you are signed in with. Messages count towards that subscription.
+- **Security**: the bridge listens on `127.0.0.1:18765` and only answers pages of the interface (it checks the `Origin` header).
+- **Conversations**: they resume the Claude Code session (`--resume`) and are kept in the browser, per project. Their MCP calls appear in the history.
+- **Settings in the page**:
+  - the model: Opus, Sonnet, Haiku, or Claude Code's default;
+  - a "Documents only" switch, on by default. Claude then answers only from the passages it found, and says when the knowledge base does not cover the question. When it is off, Claude may add general knowledge in a separate "outside the documents" part.
+- **Bridge options**: `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (default model), `--allow-writes`.
 
-## Plugin Claude Code (skills)
+## Claude Code plugin (skills)
 
-Le dépôt est aussi une marketplace Claude Code. Le plugin `innerrag` apporte le MCP et six skills : recherche, ingestion, documents, projets, exploration du graphe et consommation. Ils s'appuient sur un petit CLI Python sans dépendance (`plugins/innerrag/scripts/innerrag.py`).
+The repository is also a Claude Code marketplace. The `innerrag` plugin brings the MCP server and six skills: search, ingestion, documents, projects, graph exploration and usage. They rely on a small dependency-free Python CLI (`plugins/innerrag/scripts/innerrag.py`).
 
 ```
-/plugin marketplace add /chemin/vers/innerrag
+/plugin marketplace add /path/to/innerrag
 /plugin install innerrag@innerrag
 ```
 
-Variables lues par le plugin : `INNERRAG_URL` (défaut `http://localhost:8080`) et `INNERRAG_PROJECT`.
+The plugin reads `INNERRAG_URL` (default `http://localhost:8080`) and `INNERRAG_PROJECT`.
 
-## Développement
+## Development
 
-Rust n'est pas requis sur la machine : tout se compile dans un conteneur (Debian trixie, GCC 14, nécessaire aux en-têtes C++20 de LadybugDB).
+Rust is not required on the machine: everything compiles in a container. The container uses Debian trixie with GCC 14, which LadybugDB's C++20 headers need.
 
 ```bash
-docker build --target models -t innerrag-models .           # modèles, une fois
-cd ui && npm install && npm run dev                          # UI sur :5173, proxy vers :18080
+docker build --target models -t innerrag-models .           # models, once
+cd ui && npm install && npm run dev                          # UI on :5173, proxied to :18080
 ```
 
-Code : `src/` (serveur), `ui/` (React + Vite), `plugins/innerrag/` (plugin Claude Code), `docs/PLAN.md` (plan initial). La maquette de l'interface a été conçue dans Claude Design.
+Code layout:
+
+- `src/`: the server;
+- `ui/`: the web interface (React + Vite);
+- `plugins/innerrag/`: the Claude Code plugin;
+- `docs/PLAN.md`: the initial plan;
+- `docs/IDEES.md`: ideas for what comes next.
+
+The interface mock-up was designed in Claude Design.

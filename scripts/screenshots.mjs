@@ -34,34 +34,40 @@ if (!CHROME) throw new Error("Chrome not found: set CHROME=/path/to/chrome");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The page to capture: route, project, then actions in the page (JS run with helpers). */
+/** Questions typed in the search and assistant shots, in the interface language. */
+const ASK = {
+  fr: { search: "Comment annuler une AsyncTask ?", assistant: "Quel rapport entre ACTION_MOVE et ACTION_UP ?" },
+  en: { search: "How do I cancel an AsyncTask?", assistant: "How are ACTION_MOVE and ACTION_UP related?" },
+}[LANG] ?? { search: "How do I cancel an AsyncTask?", assistant: "How are ACTION_MOVE and ACTION_UP related?" };
+
 const SHOTS = [
-  { name: "carte", project: "sample", route: "#/carte", wait: 14000 },
+  { name: "map", project: "sample", route: "#/carte", wait: 14000 },
   {
-    name: "lien",
+    name: "link",
     project: "sample",
     route: "#/carte?entity=technology%3Ahttpclient",
     wait: 9000,
     act: `(await waitFor(() => document.querySelector(".link-score"))).click(); await sleep(1500);`,
   },
   { name: "documents", project: "sample", route: "#/documents", wait: 2500 },
-  { name: "lecteur", project: "sample", route: "#/lire?doc=5a1e8333-6e5d-404c-80c1-3a6d3c70b2c4&page=324", wait: 3500 },
+  { name: "reader", project: "sample", route: "#/lire?doc=5a1e8333-6e5d-404c-80c1-3a6d3c70b2c4&page=324", wait: 3500 },
   {
-    name: "recherche",
+    name: "search",
     project: "sample",
     route: "#/recherche",
     wait: 1500,
-    act: `await type("input[type=search], input", "Comment annuler une AsyncTask ?"); await press("Enter"); await sleep(4000);`,
+    act: `await type("input[type=search], input", ${JSON.stringify(ASK.search)}); await press("Enter"); await sleep(4000);`,
   },
   {
     name: "assistant",
     project: "sample",
     route: "#/assistant",
     wait: 3000,
-    act: `await type("#chat-input", "Quel rapport entre ACTION_MOVE et ACTION_UP ?"); await press("Enter"); await waitFor(() => document.querySelector(".chat-meta"), 120000); await sleep(800); window.scrollTo(0, 0);`,
+    act: `await type("#chat-input", ${JSON.stringify(ASK.assistant)}); await press("Enter"); await waitFor(() => document.querySelector(".chat-meta"), 120000); await sleep(800); window.scrollTo(0, 0);`,
   },
-  { name: "lacunes", project: "sample", route: "#/lacunes", wait: 3000 },
+  { name: "gaps", project: "sample", route: "#/lacunes", wait: 3000 },
   { name: "mcp", project: "sample", route: "#/mcp?tool=search_knowledge", wait: 2000 },
-  { name: "historique", project: "sample", route: "#/historique", wait: 2500 },
+  { name: "history", project: "sample", route: "#/historique", wait: 2500 },
 ].filter((s) => !ONLY || ONLY.has(s.name));
 
 // Helpers available to the `act` snippets, evaluated in the page.
