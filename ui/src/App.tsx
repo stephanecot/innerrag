@@ -312,7 +312,7 @@ function ProjectSwitcher({
         aria-labelledby="project-label"
         onClick={() => setOpen((o) => !o)}
       >
-        <span>{current?.id ?? t("project.none")}</span>
+        <span>{current ? current.title || current.id : t("project.none")}</span>
         <ChevronIcon />
       </button>
       {open && (

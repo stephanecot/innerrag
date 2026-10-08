@@ -35,6 +35,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 READ_TOOLS = [
     "search_knowledge",
@@ -84,6 +85,23 @@ OPEN = """Base your answer on the passages returned by the innerrag tools first.
 it with your general knowledge when the documents fall short, but put that part after the
 documented answer, under a line starting with "Hors documents :", and never present it as coming
 from the base."""
+
+
+# Where the server usually runs: the Docker image (docker-compose.yml), then the development server.
+SERVER_CANDIDATES = ("http://localhost:8080", "http://localhost:18080")
+
+
+def find_innerrag():
+    """The first candidate whose /api/health answers; the Docker port when none does yet (the bridge
+    may start at logon, before the container)."""
+    for url in SERVER_CANDIDATES:
+        try:
+            with urlopen(f"{url}/api/health", timeout=1) as res:
+                if res.status == 200:
+                    return url
+        except OSError:
+            pass
+    return SERVER_CANDIDATES[0]
 
 
 def origin_of(url):
@@ -463,8 +481,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     p = argparse.ArgumentParser(description="Bridge between the innerrag interface and the local coding agents.")
-    p.add_argument("--innerrag", default=os.environ.get("INNERRAG_URL", "http://localhost:18080"),
-                   help="URL of the innerrag server, as seen from this machine (default: %(default)s)")
+    p.add_argument("--innerrag", default=os.environ.get("INNERRAG_URL"),
+                   help="URL of the innerrag server, as seen from this machine "
+                        f"(default: the first of {', '.join(SERVER_CANDIDATES)} that answers)")
     p.add_argument("--port", type=int, default=int(os.environ.get("INNERRAG_CHAT_PORT", "18765")),
                    help="port to listen on, on 127.0.0.1 (default: %(default)s)")
     p.add_argument("--model", default=os.environ.get("INNERRAG_CHAT_MODEL"),
@@ -475,6 +494,7 @@ def main():
                    help="Copilot model (default: the one of your Copilot settings)")
     p.add_argument("--allow-writes", action="store_true", help="also let the agent ingest documents")
     args = p.parse_args()
+    args.innerrag = args.innerrag or find_innerrag()
 
     bridge = Bridge(args)
     if bridge.version is None and bridge.copilot_version is None:

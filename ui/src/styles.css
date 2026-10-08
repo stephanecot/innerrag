@@ -117,6 +117,9 @@ h2 { font-size: 20px; font-weight: 700; }
 h3, .side-sub { font-size: 18px; font-weight: 600; }
 p { margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
+/* The open list of a select with a transparent background is drawn on white by Chrome on Windows:
+   without this, the dark theme's light text is unreadable there. */
+option, optgroup { background-color: var(--surface); color: var(--ink); }
 :focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .muted { color: var(--ink-soft); }

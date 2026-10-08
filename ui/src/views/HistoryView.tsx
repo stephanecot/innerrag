@@ -112,7 +112,7 @@ export default function HistoryView({ projects, current }: { projects: Project[]
           {t("history.project")}
           <select value={project} onChange={(e) => setProject(e.target.value)}>
             <option value="">{t("history.all")}</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.title || p.id}</option>)}
           </select>
         </label>
         <label className="field-box">
