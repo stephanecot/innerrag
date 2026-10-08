@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DocumentSummary } from "../api";
+import { href } from "../App";
 import { DEFAULT_BRIDGE, health, send, type Agent, type BridgeEvent, type BridgeHealth } from "../chat";
+import { DocIcon, PlusIcon, SearchIcon } from "../Icons";
 import RichText from "../RichText";
 import { locale, translate, useT, type Key, type T } from "../i18n";
 import { num } from "../util";
@@ -126,6 +128,177 @@ function isCitationNote(parts: Part[], k: number): boolean {
 
 const tokens = (text: string) => Math.ceil(text.length / 4);
 
+interface PassageInfo {
+  title?: string;
+  heading?: string;
+  page?: number;
+}
+
+/** What the tool results say about each passage id (`<doc id>#<index>`): its document's title, its
+ *  section and its page. Search lines read "`id` Title › Section (page 4, score 0.91)", or "`id`
+ *  Title (passage 3, score 0.91)" followed by the passage, whose first line is its section when it
+ *  holds " › "; read_passages groups passages under "## Title" with "`id`, page 4" lines. */
+function passageInfo(parts: Part[]): Map<string, PassageInfo> {
+  const info = new Map<string, PassageInfo>();
+  for (const p of parts) {
+    if (p.kind !== "tool" || !p.result) continue;
+    const lines = p.result.split("\n");
+    let group: string | undefined;
+    lines.forEach((line, i) => {
+      const title = /^## (.+)$/.exec(line);
+      if (title) {
+        group = title[1].trim();
+        return;
+      }
+      const m = /`([^`\n]+#\d+)`(.*)$/.exec(line);
+      if (!m) return;
+      const [, id, rest] = m;
+      const cur = info.get(id) ?? {};
+      const page = /\bpage (\d+)/.exec(rest);
+      if (page) cur.page = Number(page[1]);
+      const head = /^\s+(.+?)\s+\((?:passage|page) \d+/.exec(rest);
+      if (head) {
+        const [docTitle, ...path] = head[1].split(" › ");
+        cur.title ??= docTitle;
+        if (path.length) cur.heading ??= path.join(" › ");
+      } else if (group) {
+        cur.title ??= group;
+      }
+      const next = lines[i + 1] ?? "";
+      if (!cur.heading && next.includes(" › ") && !next.includes("`")) cur.heading = next.trim();
+      info.set(id, cur);
+    });
+  }
+  return info;
+}
+
+interface SourceDoc {
+  doc: string;
+  title: string;
+  passages: { id: string; idx: number; heading?: string; page?: number }[];
+}
+
+/** The passages an answer relied on, by document in the order the agent cited them: the ids given to
+ *  cite_sources, or else the passages it read. */
+function sourcesOf(parts: Part[], docs: { id: string; title: string }[], fetched: Map<string, PassageInfo>): { cited: boolean; docs: SourceDoc[] } {
+  const ids = (name: string, field: string) =>
+    parts.flatMap((p) => (p.kind === "tool" && p.name === name && Array.isArray(p.input[field]) ? (p.input[field] as unknown[]) : []))
+      .filter((v): v is string => typeof v === "string" && /#\d+$/.test(v));
+  const cited = ids("cite_sources", "chunk_ids");
+  const chosen = cited.length ? cited : ids("read_passages", "ids");
+  const info = passageInfo(parts);
+  const titles = new Map(docs.map((d) => [d.id, d.title]));
+  const byDoc = new Map<string, SourceDoc>();
+  for (const id of new Set(chosen)) {
+    const cut = id.lastIndexOf("#");
+    const doc = id.slice(0, cut);
+    const i = { ...fetched.get(id), ...info.get(id) };
+    const entry = byDoc.get(doc) ?? { doc, title: titles.get(doc) ?? i.title ?? doc.replace(/^watch\//, ""), passages: [] };
+    entry.passages.push({ id, idx: Number(id.slice(cut + 1)), heading: i.heading, page: i.page });
+    byDoc.set(doc, entry);
+  }
+  for (const d of byDoc.values()) d.passages.sort((a, b) => a.idx - b.idx);
+  return { cited: cited.length > 0, docs: [...byDoc.values()] };
+}
+
+/** The documents behind an answer, each with the sections and passages (or pages) it drew on. */
+/** Sections and pages of passages the tool results did not describe, read from the server once. */
+const fetchedPassages = new Map<string, PassageInfo>();
+
+async function fetchPassages(project: string, doc: string, idxs: number[]) {
+  const ranges: [number, number][] = [];
+  for (const i of [...idxs].sort((a, b) => a - b)) {
+    const last = ranges.at(-1);
+    // Neighbours are read in one request; distant passages in their own.
+    if (last && i - last[1] <= 8) last[1] = i;
+    else ranges.push([i, i]);
+  }
+  await Promise.all(ranges.map(async ([from, to]) => {
+    const page = await api.project(project).passages(doc, from, to - from + 1);
+    for (const c of page.passages) {
+      const first = c.text.split("\n", 1)[0];
+      fetchedPassages.set(`${project}|${c.id}`, { heading: first.includes(" › ") ? first : undefined, page: c.page ?? undefined });
+    }
+  }));
+}
+
+function Sources({ parts, docs, project, t }: { parts: Part[]; docs: { id: string; title: string }[]; project: string; t: T }) {
+  const [fetched, setFetched] = useState(() => new Map<string, PassageInfo>());
+  const { cited, docs: sources } = useMemo(() => sourcesOf(parts, docs, fetched), [parts, docs, fetched]);
+  useEffect(() => {
+    const missing = sources.flatMap((d) => d.passages.filter((p) => !p.heading && !fetched.has(p.id)).map((p) => ({ doc: d.doc, ...p })));
+    if (!missing.length) return;
+    let live = true;
+    const byDoc = new Map<string, number[]>();
+    for (const m of missing) if (!fetchedPassages.has(`${project}|${m.id}`)) byDoc.set(m.doc, [...(byDoc.get(m.doc) ?? []), m.idx]);
+    Promise.all([...byDoc].map(([doc, idxs]) => fetchPassages(project, doc, idxs).catch(() => undefined))).then(() => {
+      if (!live) return;
+      const next = new Map(fetched);
+      // Asked once: an id the server did not return stays without a section rather than being asked again.
+      for (const m of missing) next.set(m.id, fetchedPassages.get(`${project}|${m.id}`) ?? {});
+      setFetched(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, [sources, fetched, project]);
+  if (!sources.length) return null;
+  const passages = sources.reduce((n, d) => n + d.passages.length, 0);
+  return (
+    // Folded by default: the line already says how many documents back the answer, and which.
+    <details className="chat-sources">
+      <summary className="chat-sources-head">
+        <strong>{cited ? t("chat.sources") : t("chat.sourcesRead")}</strong>
+        <span className="chat-sources-count">{t("chat.docs", { n: sources.length })}, {t("common.passages", { n: passages })}</span>
+        <span className="chat-sources-titles">{sources.map((d) => d.title).join(" · ")}</span>
+      </summary>
+      <ul className="chat-source-list">
+        {sources.map((d) => {
+          // Passages of one section are listed together, by page when the document has pages.
+          const sections = new Map<string, typeof d.passages>();
+          for (const p of d.passages) sections.set(p.heading ?? "", [...(sections.get(p.heading ?? "") ?? []), p]);
+          const firstPage = d.passages.find((p) => p.page)?.page;
+          return (
+            <li key={d.doc} className="chat-source">
+              <a className="chat-source-doc" href={href("lire", firstPage ? { doc: d.doc, page: String(firstPage) } : { doc: d.doc })} title={t("chat.openDoc", { title: d.title })}>
+                <DocIcon />
+                <span className="chat-source-title">{d.title}</span>
+              </a>
+              <ul className="chat-source-sections">
+                {[...sections].map(([heading, ps]) => {
+                  const pages = [...new Set(ps.map((p) => p.page).filter((p): p is number => !!p))];
+                  const where = pages.length
+                    ? t("chat.pageNumbers", { n: pages.length, list: pages.join(", ") })
+                    : t("chat.passageNumbers", { n: ps.length, list: ps.map((p) => p.idx + 1).join(", ") });
+                  return (
+                    <li key={heading}>
+                      {heading && <span className="chat-source-heading" title={heading}>{heading.split(" › ").at(-1)}</span>}
+                      <a className="chat-source-where" href={href("lire", pages.length ? { doc: d.doc, page: String(pages[0]) } : { doc: d.doc, tab: "passages" })}>{where}</a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
+/** Conversations by age, for the list: today, yesterday, the last 7 days, older. */
+function ageGroup(at: number): "chat.today" | "chat.yesterday" | "chat.lastWeek" | "chat.older" {
+  const day = new Date();
+  day.setHours(0, 0, 0, 0);
+  const start = day.getTime();
+  if (at >= start) return "chat.today";
+  if (at >= start - 86_400_000) return "chat.yesterday";
+  if (at >= start - 7 * 86_400_000) return "chat.lastWeek";
+  return "chat.older";
+}
+
+const LIST_STORAGE = "innerrag.chatList";
+
 
 export default function AssistantView({ project }: { project: string }) {
   const storageKey = `innerrag.chats.${project}`;
@@ -143,13 +316,15 @@ export default function AssistantView({ project }: { project: string }) {
   const [copilotModel, setCopilotModel] = useState(() => load<string>(COPILOT_MODEL_STORAGE, ""));
   const [strict, setStrict] = useState(() => load<boolean>(STRICT_STORAGE, true));
   const [confirmClear, setConfirmClear] = useState(false);
+  // The list of conversations: shown by default where there is room for it beside the thread.
+  const [listOpen, setListOpen] = useState(() => load<boolean | null>(LIST_STORAGE, null) ?? window.matchMedia("(min-width: 1100px)").matches);
+  const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
   /** Seeds of the starter questions, drawn from the graph; the sentences follow the language. */
   const [seeds, setSeeds] = useState<{ top?: string; link?: [string, string] } | null>(null);
   const [docs, setDocs] = useState<DocumentSummary[]>([]);
   const abort = useRef<AbortController | null>(null);
   const sending = useRef(false);
-  const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const running = conversation.exchanges.at(-1)?.status === "running";
   // A conversation stays with the agent that started it; a new one uses the current choice.
@@ -240,8 +415,10 @@ export default function AssistantView({ project }: { project: string }) {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+  // To the very bottom of the page: the composer sits there, sticky, below the end of the thread
+  // (bringing the end of the thread into view instead scrolled the page back up under it).
   useEffect(() => {
-    if (stick.current) endRef.current?.scrollIntoView({ block: "end" });
+    if (stick.current) window.scrollTo({ top: document.documentElement.scrollHeight });
   }, [conversation]);
 
   const update = (fn: (x: Exchange) => Exchange) =>
@@ -346,6 +523,29 @@ export default function AssistantView({ project }: { project: string }) {
   const ready = !!status?.ok;
   const empty = conversation.exchanges.length === 0;
 
+  // The list, filtered by the search (questions and answers), grouped by age.
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const shown = q
+      ? saved.filter((c) => c.exchanges.some((x) => x.question.toLowerCase().includes(q) || x.parts.some((p) => p.kind === "text" && p.text.toLowerCase().includes(q))))
+      : saved;
+    const out: { key: ReturnType<typeof ageGroup>; items: Conversation[] }[] = [];
+    for (const c of shown) {
+      const key = ageGroup(c.at);
+      const last = out.at(-1);
+      if (last?.key === key) last.items.push(c);
+      else out.push({ key, items: [c] });
+    }
+    return out;
+  }, [saved, query]);
+
+  const toggleList = () => {
+    setListOpen((o) => {
+      save(LIST_STORAGE, JSON.stringify(!o));
+      return !o;
+    });
+  };
+
   return (
     <section className="page chat-page" aria-labelledby="chat-title">
       <div className="page-head">
@@ -353,9 +553,74 @@ export default function AssistantView({ project }: { project: string }) {
           <h1 id="chat-title">{t("chat.title")}</h1>
           <p>{t.rich("chat.intro", { project: <strong>{project}</strong> })}</p>
         </div>
+        <div className="toolbar chat-head-actions">
+          <button type="button" className="btn" aria-expanded={listOpen} aria-controls="chat-convs" onClick={toggleList}>
+            {listOpen ? t("chat.hideConvs") : t("chat.showConvs", { n: saved.length })}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={restart} disabled={running || empty}>
+            <PlusIcon /> {t("chat.newConversation")}
+          </button>
+        </div>
       </div>
 
-      <div className="chat-layout">
+      <div className={`chat-layout${listOpen ? " with-list" : ""}`}>
+      {listOpen && (
+        <aside id="chat-convs" className="panel chat-convs" aria-labelledby="chats-title">
+          <h2 id="chats-title" className="sr-only">{t("chat.conversations")}</h2>
+          {saved.length > 0 && (
+            <label className="field-box chat-convs-search">
+              <SearchIcon size={16} />
+              <span className="sr-only">{t("chat.searchConvsLabel")}</span>
+              <input type="search" value={query} placeholder={t("chat.searchConvs")} onChange={(e) => setQuery(e.target.value)} />
+            </label>
+          )}
+          {saved.length === 0 ? (
+            <p className="muted">{t("chat.keptHere")}</p>
+          ) : groups.length === 0 ? (
+            <p className="muted">{t("chat.noMatch")}</p>
+          ) : (
+            <div className="chat-convs-scroll">
+              {groups.map((g) => (
+                <section key={g.key} className="chat-convs-group" aria-label={t(g.key)}>
+                  <h3>{t(g.key)}</h3>
+                  <ul className="chat-list">
+                    {g.items.map((c) => (
+                      <li key={c.id} className={c.id === conversation.id ? "current" : ""}>
+                        <button type="button" className="chat-list-open" onClick={() => open(c)} disabled={running} title={conversationTitle(c)} aria-current={c.id === conversation.id || undefined}>
+                          <span className="chat-list-title">{conversationTitle(c)}</span>
+                          <span className="chat-list-meta">
+                            {new Date(c.at).toLocaleString(locale(), g.key === "chat.today" || g.key === "chat.yesterday" ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short" })}
+                            {" · "}
+                            {t("chat.questions", { n: c.exchanges.length })}
+                          </span>
+                        </button>
+                        <button type="button" className="chat-list-delete" aria-label={t("chat.deleteConv", { title: conversationTitle(c) })} onClick={() => remove(c.id)} disabled={running}>×</button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+          {saved.length > 0 && (
+            <div className="chat-convs-foot">
+              <p className="muted">{t("chat.keptMax", { n: KEPT_CONVERSATIONS })}</p>
+              {confirmClear ? (
+                <div className="chat-clear">
+                  <span>{t("chat.clearConfirm", { n: saved.length })}</span>
+                  <div className="toolbar">
+                    <button type="button" className="btn" onClick={() => setConfirmClear(false)}>{t("common.cancel")}</button>
+                    <button type="button" className="btn btn-danger-solid" onClick={clearAll}>{t("chat.clearAll")}</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)} disabled={running}>{t("chat.clearConvs")}</button>
+              )}
+            </div>
+          )}
+        </aside>
+      )}
+
       <div className="chat-main">
 
       {!ready && !checking && (
@@ -369,7 +634,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
           <p className="muted">
             {t.rich("chat.setupNote", {
               model: <span className="mono">--model sonnet</span>,
-              innerrag: <span className="mono">--innerrag http://localhost:18080</span>,
+              innerrag: <span className="mono">--innerrag {window.location.origin}</span>,
               writes: <span className="mono">--allow-writes</span>,
             })}
           </p>
@@ -427,7 +692,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                 </ol>
               )}
               {x.parts.filter((p, k) => p.kind === "text" && !isCitationNote(x.parts, k)).map((p, j) => (
-                <div key={j} className="chat-text"><RichText text={(p as { text: string }).text} docs={citedDocs} project={project} /></div>
+                <div key={j} className="chat-text"><RichText text={(p as { text: string }).text} docs={citedDocs} project={project} streaming={x.status === "running"} /></div>
               ))}
               {x.status === "running" && (
                 <p className="chat-wait" role="status">
@@ -438,6 +703,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
               )}
               {x.status === "stopped" && <p className="muted">{t("chat.stopped")}</p>}
               {x.status === "error" && <div className="error-banner" role="alert">{x.error}</div>}
+              {x.status !== "running" && <Sources parts={x.parts} docs={citedDocs} project={project} t={t} />}
               {x.meta && (
                 <p className="chat-meta">
                   {x.meta.input_tokens > 0
@@ -460,7 +726,6 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
             </div>
           </article>
         ))}
-        <div ref={endRef} />
       </div>
 
       <form
@@ -487,22 +752,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
             }
           }}
         />
-        <div className="chat-composer-foot">
-          <span className="muted">
-            {t("chat.enterHint")}
-            {totals.input > 0 && t("chat.totals", { read: totals.input, written: totals.output })}
-          </span>
-          {running ? (
-            <button type="button" className="btn btn-danger" onClick={() => abort.current?.abort()}>{t("chat.stop")}</button>
-          ) : (
-            <button type="submit" className="btn btn-primary" disabled={!ready || !draft.trim()}>{t("chat.send")}</button>
-          )}
-        </div>
-      </form>
-      </div>
-
-      <div className="chat-side" role="group" aria-label={t("chat.sideAria")}>
-        <section className="panel chat-side-box">
+        <div className="chat-controls" role="group" aria-label={t("chat.sideAria")}>
           <span className={`bridge-status${ready ? " on" : ""}`} role="status">
             {checking
               ? t("chat.looking")
@@ -513,10 +763,9 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                   })
                 : t("chat.bridgeOff")}
           </span>
-          <label className="field">
-            <span className="label">{t("chat.agent")}</span>
+          <label className="field-box" title={t("chat.agentHint")}>
+            {t("chat.agent")}
             <select
-              className="input"
               value={agent}
               disabled={running}
               onChange={(e) => {
@@ -533,12 +782,10 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                 </option>
               ))}
             </select>
-            <span className="hint">{t("chat.agentHint")}</span>
           </label>
-          <label className="field">
-            <span className="label">{t("chat.model")}</span>
+          <label className="field-box" title={t("chat.modelHint")}>
+            {t("chat.model")}
             <select
-              className="input"
               value={model}
               onChange={(e) => {
                 if (agent === "copilot") {
@@ -552,64 +799,34 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
             >
               {models.map((m) => <option key={m.value} value={m.value}>{m.key ? t(m.key) : m.label}</option>)}
             </select>
-            <span className="hint">{t("chat.modelHint")}</span>
           </label>
-          <label className="chat-switch">
+          <label className="chat-switch" title={strict ? t("chat.strictOn") : t("chat.strictOff")}>
             <input
               type="checkbox"
               role="switch"
               checked={strict}
+              aria-describedby="chat-strict-hint"
               onChange={(e) => {
                 setStrict(e.target.checked);
                 save(STRICT_STORAGE, JSON.stringify(e.target.checked));
               }}
             />
-            <span>
-              <strong>{t("chat.strict")}</strong>
-              <span className="hint">
-                {strict
-                  ? t("chat.strictOn")
-                  : t("chat.strictOff")}
-              </span>
-            </span>
+            <strong>{t("chat.strict")}</strong>
+            <span id="chat-strict-hint" className="sr-only">{strict ? t("chat.strictOn") : t("chat.strictOff")}</span>
           </label>
-        </section>
-
-        <section className="panel chat-side-box" aria-labelledby="chats-title">
-          <div className="chat-side-head">
-            <h2 id="chats-title">{t("chat.conversations")}</h2>
-            <button type="button" className="btn" onClick={restart} disabled={running || empty}>{t("chat.new")}</button>
-          </div>
-          {saved.length === 0 ? (
-            <p className="muted">{t("chat.keptHere")}</p>
+        </div>
+        <div className="chat-composer-foot">
+          <span className="muted">
+            {t("chat.enterHint")}
+            {totals.input > 0 && t("chat.totals", { read: totals.input, written: totals.output })}
+          </span>
+          {running ? (
+            <button type="button" className="btn btn-danger" onClick={() => abort.current?.abort()}>{t("chat.stop")}</button>
           ) : (
-            <ul className="chat-list">
-              {saved.map((c) => (
-                <li key={c.id} className={c.id === conversation.id ? "current" : ""}>
-                  <button type="button" className="chat-list-open" onClick={() => open(c)} disabled={running} title={conversationTitle(c)}>
-                    <span className="chat-list-title">{conversationTitle(c)}</span>
-                    <span className="chat-list-meta">
-                      {new Date(c.at).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })},{" "}
-                      {t("chat.questions", { n: c.exchanges.length })}
-                    </span>
-                  </button>
-                  <button type="button" className="chat-list-delete" aria-label={t("chat.deleteConv", { title: conversationTitle(c) })} onClick={() => remove(c.id)} disabled={running}>×</button>
-                </li>
-              ))}
-            </ul>
+            <button type="submit" className="btn btn-primary" disabled={!ready || !draft.trim()}>{t("chat.send")}</button>
           )}
-          {saved.length > 0 && (confirmClear ? (
-            <div className="chat-clear">
-              <span>{t("chat.clearConfirm", { n: saved.length })}</span>
-              <div className="toolbar">
-                <button type="button" className="btn" onClick={() => setConfirmClear(false)}>{t("common.cancel")}</button>
-                <button type="button" className="btn btn-danger-solid" onClick={clearAll}>{t("chat.clearAll")}</button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)} disabled={running}>{t("chat.clearConvs")}</button>
-          ))}
-        </section>
+        </div>
+      </form>
       </div>
       </div>
     </section>

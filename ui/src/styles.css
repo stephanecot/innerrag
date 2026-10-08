@@ -493,6 +493,32 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .chat-composer { position: sticky; bottom: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 12px 0 20px; background: linear-gradient(to bottom, transparent, var(--paper) 14px); }
 .chat-composer .textarea { min-height: 64px; resize: none; }
 .chat-composer-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+/* Agent, model and grounding: next to where the question is typed, since they apply to it. */
+.chat-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chat-controls .field-box, .chat-controls .bridge-status { min-height: 38px; font-size: 13.5px; }
+.chat-controls .field-box select { max-width: 200px; }
+.chat-controls .chat-switch { align-items: center; gap: 8px; min-height: 38px; font-size: 13.5px; }
+/* The documents an answer relied on: a card under the answer, each document a link to the reader. */
+.chat-sources { padding: 0 14px; border: 1px solid var(--rule); border-left: 3px solid var(--c-organization); border-radius: 8px; background: var(--surface); }
+.chat-sources-head { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 10px 0; cursor: pointer; list-style: none; font-size: 14px; }
+.chat-sources-head::-webkit-details-marker { display: none; }
+.chat-sources-head::before { content: "▸"; color: var(--ink-soft); transition: transform 0.15s; }
+.chat-sources[open] > .chat-sources-head::before { transform: rotate(90deg); }
+.chat-sources-head:hover strong { text-decoration: underline; }
+.chat-sources-count { flex: none; color: var(--ink-soft); font-size: 13px; }
+.chat-sources-titles { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 13px; }
+.chat-sources[open] .chat-sources-titles { display: none; }
+.chat-source-list { list-style: none; margin: 0; padding: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.chat-source { display: flex; flex-direction: column; gap: 2px; }
+.chat-source-doc { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 32px; font-weight: 600; color: var(--link); text-decoration: none; }
+.chat-source-doc:hover .chat-source-title { text-decoration: underline; }
+.chat-source-doc svg { flex: none; width: 18px; height: 18px; }
+.chat-source-sections { list-style: none; margin: 0; padding: 0 0 0 26px; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; color: var(--ink-2); }
+.chat-source-sections li { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.chat-source-heading { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.chat-source-heading::after { content: "·"; margin-left: 8px; color: var(--ink-soft); }
+.chat-source-where { color: var(--ink-soft); }
+.chat-source-where:hover { color: var(--link); }
 @keyframes chat-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-technology) 25%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .chat-step-dot.busy { animation: none; } }
 .chat-text .md-h1, .chat-text .md-h2 { font-size: 20px; }
@@ -536,13 +562,26 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .tool-result { margin: 0; padding: 12px 14px; max-height: 360px; overflow: auto; background: var(--sunken); border-radius: 8px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-result.failed { background: var(--danger-bg); color: var(--danger); }
 
+/* Conversations on the left (like most chat tools), the thread and its composer on the right. The
+   list keeps the height of the window and scrolls on its own, however many conversations there are. */
 .chat-layout { display: flex; flex-wrap: wrap; gap: 24px 32px; align-items: flex-start; flex: 1; }
 .chat-main { flex: 999 1 520px; min-width: 0; max-width: 1040px; display: flex; flex-direction: column; gap: 24px; min-height: calc(100vh - 160px); }
-.chat-side { flex: 1 1 280px; max-width: 360px; position: sticky; top: 24px; display: flex; flex-direction: column; gap: 16px; }
-.chat-side-box { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-.chat-side-box .bridge-status { align-self: flex-start; }
-.chat-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.chat-side-head h2 { font-size: 18px; }
+.chat-head-actions .btn-primary { display: inline-flex; align-items: center; gap: 6px; }
+.chat-convs {
+  flex: 1 1 260px; max-width: 320px; position: sticky; top: 24px; max-height: calc(100vh - 48px);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.chat-convs-search { min-height: 40px; color: var(--ink-soft); }
+.chat-convs-search input { flex: 1; font-weight: 400 !important; color: var(--ink); }
+.chat-convs-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin: 0 -4px; padding: 0 4px; }
+.chat-convs-group h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-soft); padding: 0 10px 4px; }
+.chat-convs-foot { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--rule-soft); }
+.chat-convs-foot p { font-size: 12.5px; }
+.chat-convs-foot .btn { align-self: flex-start; }
+@media (max-width: 1099px) {
+  /* No room beside the thread: the list opens above it, shorter. */
+  .chat-convs { flex-basis: 100%; max-width: none; position: static; max-height: 50vh; }
+}
 .chat-switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
 .chat-switch input { appearance: none; flex: none; width: 40px; height: 24px; margin: 0; border-radius: 12px; background: var(--rule); position: relative; cursor: pointer; transition: background 0.15s; }
 .chat-switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: transform 0.15s; }
@@ -550,7 +589,7 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .chat-switch input:checked::after { transform: translateX(16px); }
 .chat-switch > span { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .chat-switch .hint { font-size: 13px; color: var(--ink-soft); }
-.chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow: auto; }
+.chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .chat-list li { display: flex; align-items: stretch; border-radius: 6px; }
 .chat-list li:hover { background: var(--sunken); }
 .chat-list li.current { background: var(--ink); color: var(--paper); }
@@ -643,6 +682,35 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .rich a { color: var(--link); }
 .rich-preview { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); overflow-x: auto; }
 .rich-preview svg { display: block; margin: 0 auto; }
+/* Mermaid: the source waits hidden until it is drawn; it stays readable under "Show the code". */
+.rich-mermaid-src { display: none; }
+.rich-mermaid:not([data-drawn]) { min-height: 80px; }
+.rich-mermaid-svg svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+/* An agent's own SVG or HTML mock-up hard-codes its colors for a light page (dark text, no
+   background): it gets a light card in both themes. Mermaid diagrams follow the theme instead. */
+.rich-preview:not(.rich-mermaid) { background: #ffffff; color: #1e2a33; color-scheme: light; }
+.rich-mermaid-error { color: var(--danger); font-size: 14px; }
+/* Enlarge / download, on every figure, diagram and preview of an answer. */
+.rich-preview { position: relative; }
+.rich-media { position: relative; display: inline-block; max-width: 100%; }
+.rich-media img { cursor: zoom-in; }
+.rich-actions { position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+.rich-preview:hover > .rich-actions, .rich-media:hover > .rich-actions, .rich-actions:focus-within { opacity: 1; }
+@media (hover: none) { .rich-actions { opacity: 1; } }
+.rich-action { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
+.rich-action:hover { background: var(--sunken); }
+.lightbox { width: 96vw; height: 94vh; max-width: none; max-height: none; padding: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); color: var(--ink); display: none; flex-direction: column; }
+.lightbox[open] { display: flex; }
+.lightbox::backdrop { background: rgb(0 0 0 / 0.6); }
+.lightbox-bar { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule-soft); }
+.lightbox-body { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.lightbox-body > img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lightbox-body > svg, .lightbox-body > .rich-mermaid-svg { width: 100%; height: 100%; }
+.lightbox-body > svg, .lightbox-body > .rich-mermaid-svg > svg { max-width: none !important; }
+.lightbox-body > .rich-mermaid-svg > svg { width: 100%; height: 100%; }
+.lightbox-body.light { background: #ffffff; color: #1e2a33; color-scheme: light; }
+.lightbox-body > :not(svg):not(img) { max-width: 100%; }
+.lightbox-caption { padding: 8px 16px 14px; text-align: center; color: var(--ink-2); font-size: 14px; }
 .rich-source { margin: -0.4em 0 0.9em; font-size: 13px; }
 .rich-source summary { cursor: pointer; color: var(--link); min-height: 28px; display: flex; align-items: center; }
 .mcp-connect-hint { font-size: 13px; margin-top: -8px; }
