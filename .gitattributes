@@ -1,0 +1,7 @@
+# Shell scripts, Python scripts and the Dockerfile keep LF on every platform: with Git for Windows'
+# default core.autocrlf=true they would be checked out with CRLF, and `scripts/build.sh` then fails
+# under WSL (`/usr/bin/env: 'bash\r': No such file or directory`).
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf

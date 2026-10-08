@@ -9,3 +9,7 @@ __pycache__/
 
 # Examples built from client documents: never pushed
 /docs/examples/
+
+# Company certificate authorities for the build (see certs/README.md): never pushed
+/certs/*
+!/certs/README.md

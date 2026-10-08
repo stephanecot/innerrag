@@ -46,10 +46,12 @@ docker compose up -d                # or: docker compose up -d --build
 open http://localhost:8080          # web interface
 ```
 
-The build scripts produce a Linux image for the machine's architecture.
+The build scripts produce a Linux image for the machine's architecture. A step-by-step guide, from a blank machine to the Assistant (build, proxies, watched folders, chat bridge, troubleshooting), is in [GETTING_STARTED.md](GETTING_STARTED.md).
 
 - **Options**: `--platform amd64|arm64|all`, `--push`, `--tag`, and `--save file.tar` for an offline transfer. In PowerShell they are `-Platform`, `-Push`, `-Tag` and `-Save`.
-- **Windows**: Docker Desktop must be in "Linux containers" mode.
+- **Engine**: Docker (with buildx) or, when Docker is absent, Podman (`--engine podman`, `-Engine podman`). With Podman on Windows or macOS, start its machine first (`podman machine start`).
+- **Windows**: Docker Desktop must be in "Linux containers" mode. `.gitattributes` keeps the shell scripts in LF, so `scripts/build.sh` also runs under WSL.
+- **Behind a proxy that inspects TLS** (Zscaler…): downloads fail with `self-signed certificate in certificate chain` or `UnknownIssuer`. Put the company root CA in `certs/` (git-ignored, see `certs/README.md`); on Windows, `.\scripts\build.ps1 -TrustWindowsCa "<name>"` exports it from the Windows store.
 - **Duration and size**: the first build takes about 10 minutes. The image is 1.6 GB (674 MB compressed).
 
 The server has no authentication: it is single-user. `docker-compose.yml` therefore publishes the port on `127.0.0.1` only; expose it only on a network you trust.
@@ -302,7 +304,7 @@ py scripts\chat-bridge.py                # Windows
   - the model: for Claude Code, Opus, Sonnet, Haiku or its default; for Copilot, GPT-4.1, GPT-5, Claude Sonnet 4.5… or its default;
   - a "Documents only" switch, on by default. Claude then answers only from the passages it found, and says when the knowledge base does not cover the question. When it is off, Claude may add general knowledge in a separate "outside the documents" part.
 - **Answers**: rendered as Markdown, with tables, figures from the documents, and ```` ```svg ```` / ```` ```html ```` blocks shown as a sanitized preview next to their source. Agents sometimes write their answer again after `cite_sources`; the bridge drops that repeat.
-- **Bridge options**: `--innerrag http://localhost:18080`, `--port`, `--model sonnet` (default Claude model), `--copilot-model gpt-4.1` (default Copilot model), `--claude` / `--copilot` (executables), `--allow-writes`. The bridge skips the shim VS Code puts in the PATH and runs the Copilot CLI itself; its JSON output needs `--experimental`, which the bridge passes.
+- **Bridge options**: `--innerrag URL` (default: the first of `http://localhost:8080` and `http://localhost:18080` that answers), `--port`, `--model sonnet` (default Claude model), `--copilot-model gpt-4.1` (default Copilot model), `--claude` / `--copilot` (executables), `--allow-writes`. The bridge skips the shim VS Code puts in the PATH and runs the Copilot CLI itself; its JSON output needs `--experimental`, which the bridge passes.
 
 ## Claude Code plugin (skills)
 
@@ -338,7 +340,9 @@ Code layout:
 - `src/`: the server;
 - `ui/`: the web interface (React + Vite);
 - `plugins/innerrag/`: the Claude Code plugin;
+- `GETTING_STARTED.md`: how to build and start the application, step by step;
 - `docs/PLAN.md`: the initial plan;
-- `docs/IDEES.md`: the next piece of work under study (linking images to the entities they show).
+- `docs/IDEES.md`: the next piece of work under study (linking images to the entities they show);
+- `.claude/skills/innerrag-build/`: a Claude Code skill that builds and starts the image on any OS (Docker, Podman, WSL, TLS-inspecting proxies) and covers the usual build failures.
 
 The interface mock-up was designed in Claude Design.

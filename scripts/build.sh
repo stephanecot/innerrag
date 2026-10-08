@@ -7,6 +7,7 @@
 #   scripts/build.sh --platform all --push --tag registry.example.com/innerrag:0.1.0
 #   scripts/build.sh --save innerrag.tar     # export the image to a file (offline transfer)
 #   scripts/build.sh --gpu                   # NVIDIA GPU image innerrag:cuda (linux/amd64)
+#   scripts/build.sh --engine podman         # force Podman (default: docker, else podman)
 #
 # Options:
 #   --tag NAME          image name (default innerrag:latest)
@@ -17,6 +18,9 @@
 #   --no-cache          rebuild every layer
 #   --ner-file F        GLiNER ONNX file (default onnx/model_fp16.onnx)
 #   --embed-file F      e5 ONNX file (default onnx/model_quantized.onnx)
+#   --engine E          auto | docker | podman
+#
+# Behind a TLS-inspecting proxy (Zscaler...), put the company root CA in certs/ (see certs/README.md).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -27,6 +31,7 @@ GPU=0
 PUSH=0
 SAVE=""
 EXTRA=()
+ENGINE="auto"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,7 +43,8 @@ while [[ $# -gt 0 ]]; do
     --no-cache) EXTRA+=(--no-cache); shift ;;
     --ner-file) EXTRA+=(--build-arg "NER_FILE=$2"); shift 2 ;;
     --embed-file) EXTRA+=(--build-arg "EMBED_FILE=$2"); shift 2 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --engine) ENGINE="$2"; shift 2 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -56,8 +62,20 @@ else
   EXTRA+=(--target cpu)
 fi
 
-command -v docker >/dev/null || { echo "docker is not installed or not in PATH" >&2; exit 1; }
-docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required (Docker 23+ / Docker Desktop)" >&2; exit 1; }
+if [[ "$ENGINE" == "auto" ]]; then
+  if command -v docker >/dev/null; then ENGINE=docker
+  elif command -v podman >/dev/null; then ENGINE=podman
+  else echo "neither docker nor podman is installed or in PATH" >&2; exit 1; fi
+fi
+case "$ENGINE" in
+  docker)
+    command -v docker >/dev/null || { echo "docker is not installed or not in PATH" >&2; exit 1; }
+    docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required (Docker 23+ / Docker Desktop)" >&2; exit 1; } ;;
+  podman)
+    command -v podman >/dev/null || { echo "podman is not installed or not in PATH" >&2; exit 1; }
+    podman info >/dev/null 2>&1 || { echo "podman cannot reach its engine (macOS/Windows: podman machine start)" >&2; exit 1; } ;;
+  *) echo "--engine must be auto, docker or podman" >&2; exit 2 ;;
+esac
 
 case "$PLATFORM" in
   native) PLATFORMS="" ;;
@@ -71,27 +89,36 @@ if [[ "$PLATFORM" == "all" && $PUSH -eq 0 ]]; then
   echo "--platform all builds a multi-architecture image, which must be pushed: add --push and a registry --tag" >&2
   exit 2
 fi
+if [[ "$PLATFORM" == "all" && "$ENGINE" == "podman" ]]; then
+  echo "--platform all needs docker buildx; with podman, build and push each architecture (--platform amd64 / arm64)" >&2
+  exit 2
+fi
 
-ARGS=(buildx build --tag "$TAG" ${EXTRA[@]+"${EXTRA[@]}"})
+if [[ "$ENGINE" == "docker" ]]; then ARGS=(buildx build); else ARGS=(build); fi
+ARGS+=(--tag "$TAG" ${EXTRA[@]+"${EXTRA[@]}"})
 [[ -n "$PLATFORMS" ]] && ARGS+=(--platform "$PLATFORMS")
-if [[ $PUSH -eq 1 ]]; then ARGS+=(--push); else ARGS+=(--load); fi
+if [[ "$ENGINE" == "docker" ]]; then
+  if [[ $PUSH -eq 1 ]]; then ARGS+=(--push); else ARGS+=(--load); fi
+fi
 if [[ "$PLATFORM" == "all" ]]; then
   # The default "docker" driver cannot build several platforms at once.
   docker buildx inspect innerrag-builder >/dev/null 2>&1 || docker buildx create --name innerrag-builder --driver docker-container >/dev/null
   ARGS+=(--builder innerrag-builder)
 fi
 
-echo "==> docker ${ARGS[*]} ."
+echo "==> $ENGINE ${ARGS[*]} ."
 start=$(date +%s)
-docker "${ARGS[@]}" .
+"$ENGINE" "${ARGS[@]}" .
 echo "==> built $TAG in $(( $(date +%s) - start )) s"
+# Podman builds into its local store; pushing is a separate step.
+if [[ $PUSH -eq 1 && "$ENGINE" == "podman" ]]; then podman push "$TAG"; fi
 
 if [[ $PUSH -eq 0 ]]; then
-  docker image ls "$TAG" --format '    {{.Repository}}:{{.Tag}}  {{.Size}}'
+  "$ENGINE" image ls "$TAG" --format '    {{.Repository}}:{{.Tag}}  {{.Size}}'
 fi
 if [[ -n "$SAVE" ]]; then
   echo "==> saving to $SAVE"
-  docker save "$TAG" -o "$SAVE"
-  echo "    load it elsewhere with: docker load -i $SAVE"
+  "$ENGINE" save "$TAG" -o "$SAVE"
+  echo "    load it elsewhere with: $ENGINE load -i $SAVE"
 fi
-echo "==> run it: docker run -d -p 8080:8080 -v \"\$PWD/data:/data\" $TAG   (or: docker compose up -d)"
+echo "==> run it: $ENGINE run -d -p 127.0.0.1:8080:8080 -v \"\$PWD/data:/data\" $TAG   (or: $ENGINE compose up -d)"

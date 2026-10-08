@@ -28,6 +28,9 @@ FROM debian:trixie-slim AS models
 ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE RERANK_REPO RERANK_FILE ORT_VERSION TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# Company CAs from certs/ (TLS-inspecting proxies, see certs/README.md); README.md is not a .crt and is skipped.
+COPY certs/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates
 WORKDIR /models
 RUN set -eux; \
     hf() { curl -fsSL --retry 3 -o "$3" "https://huggingface.co/$1/resolve/main/$2"; }; \
@@ -53,6 +56,9 @@ FROM debian:trixie-slim AS ort-gpu
 ARG ORT_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# Company CAs from certs/ (TLS-inspecting proxies, see certs/README.md); README.md is not a .crt and is skipped.
+COPY certs/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates
 RUN set -eux; \
     curl -fsSL --retry 3 "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz" | tar xz -C /tmp; \
     mkdir -p /ort; \
@@ -66,6 +72,12 @@ FROM rust:1-trixie AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 ENV LBUG_VERSION=0.21.2
+# ort runs with load-dynamic (libonnxruntime.so comes from the models stage), so ort-sys has nothing to
+# link: pointing it elsewhere stops its build script downloading a static ONNX Runtime for nothing.
+ENV ORT_LIB_LOCATION=/nonexistent
+# Company CAs from certs/ (TLS-inspecting proxies, see certs/README.md); README.md is not a .crt and is skipped.
+COPY certs/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
@@ -84,6 +96,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libssl3t64 ca-c
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app \
     && mkdir -p /data/projects /watch && chown -R app:app /data && chmod -R a+rwX /data
+# Company CAs from certs/ (TLS-inspecting proxies, see certs/README.md); README.md is not a .crt and is skipped.
+COPY certs/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates
 COPY --from=models /ort/libonnxruntime.so /usr/local/lib/libonnxruntime.so
 COPY --from=models /models /models
 COPY --from=builder /usr/local/bin/innerrag /usr/local/bin/innerrag
