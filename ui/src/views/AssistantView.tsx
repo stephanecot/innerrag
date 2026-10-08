@@ -16,7 +16,17 @@ interface Exchange {
   parts: Part[];
   status: "running" | "done" | "stopped" | "error";
   error?: string;
-  meta?: { duration_ms: number; turns: number; input_tokens: number; output_tokens: number; premium_requests?: number | null };
+  meta?: {
+    duration_ms: number;
+    turns: number;
+    input_tokens: number;
+    output_tokens: number;
+    premium_requests?: number | null;
+    /** The whole conversation held by the agent after this answer, in tokens; estimated when the agent does not say. */
+    context_tokens?: number | null;
+    context_window?: number | null;
+    context_estimated?: boolean;
+  };
   /** Model that answered, and whether it had to stick to the documents. */
   model?: string;
   strict?: boolean;
@@ -127,6 +137,18 @@ function isCitationNote(parts: Part[], k: number): boolean {
 }
 
 const tokens = (text: string) => Math.ceil(text.length / 4);
+
+// Copilot reports no token counts. Its context is estimated from what it was sent and wrote: its
+// own instructions and the tool definitions once, then for every question the bridge's
+// instructions (they open every message), the question, the tool results and the answer.
+const COPILOT_BASE_TOKENS = 6000;
+const BRIDGE_INSTRUCTIONS_TOKENS = 1600;
+
+function estimateContext(previous: number | null | undefined, x: Exchange): number {
+  const turn = BRIDGE_INSTRUCTIONS_TOKENS + tokens(x.question)
+    + x.parts.reduce((n, p) => n + (p.kind === "text" ? tokens(p.text) : tokens(JSON.stringify(p.input)) + (p.tokens ?? tokens(p.result ?? ""))), 0);
+  return (previous || COPILOT_BASE_TOKENS) + turn;
+}
 
 interface PassageInfo {
   title?: string;
@@ -448,16 +470,30 @@ export default function AssistantView({ project }: { project: string }) {
         }));
         break;
       case "done":
-        setConversation((c) => ({ ...c, session: e.session ?? c.session }));
-        update((x) => ({
-          ...x,
-          status: e.ok ? "done" : "error",
-          error: e.ok ? undefined : e.error ?? translate("chat.noAnswer"),
-          meta: { duration_ms: e.duration_ms, turns: e.turns, input_tokens: e.input_tokens, output_tokens: e.output_tokens, premium_requests: e.premium_requests },
-        }));
+        setConversation((c) => {
+          const x = c.exchanges[c.exchanges.length - 1];
+          const previous = c.exchanges.at(-2)?.meta?.context_tokens;
+          const exact = e.context_tokens ?? null;
+          const done: Exchange = {
+            ...x,
+            status: e.ok ? "done" : "error",
+            error: e.ok ? undefined : e.error ?? translate("chat.noAnswer"),
+            meta: {
+              duration_ms: e.duration_ms,
+              turns: e.turns,
+              input_tokens: e.input_tokens,
+              output_tokens: e.output_tokens,
+              premium_requests: e.premium_requests,
+              context_tokens: exact ?? estimateContext(previous, x),
+              context_window: e.context_window ?? null,
+              context_estimated: exact === null,
+            },
+          };
+          return { ...c, session: e.session ?? c.session, exchanges: [...c.exchanges.slice(0, -1), done] };
+        });
         break;
       case "error":
-        update((x) => ({ ...x, status: "error", error: e.message }));
+        update((x) => ({ ...x, status: "error", error: e.code === "copilot_mcp_blocked" ? translate("chat.copilotMcpBlocked") : e.message }));
         break;
     }
   };
@@ -512,13 +548,8 @@ export default function AssistantView({ project }: { project: string }) {
     restart();
   };
 
-  const totals = useMemo(() => {
-    const done = conversation.exchanges.filter((x) => x.meta);
-    return {
-      input: done.reduce((s, x) => s + (x.meta?.input_tokens ?? 0), 0),
-      output: done.reduce((s, x) => s + (x.meta?.output_tokens ?? 0), 0),
-    };
-  }, [conversation.exchanges]);
+  // The conversation's context: what the agent holds after its last answer.
+  const context = useMemo(() => [...conversation.exchanges].reverse().find((x) => x.meta?.context_tokens)?.meta, [conversation.exchanges]);
 
   const ready = !!status?.ok;
   const empty = conversation.exchanges.length === 0;
@@ -719,6 +750,7 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
                         written: x.meta.output_tokens,
                       })}
                   {x.meta.premium_requests != null && `, ${t("chat.premium", { n: x.meta.premium_requests })}`}
+                  {x.meta.context_tokens ? `, ${t(x.meta.context_estimated ? "chat.contextAfterEstimated" : "chat.contextAfter", { n: num(x.meta.context_tokens) })}` : ""}
                   {x.model && `, ${[...MODELS, ...COPILOT_MODELS].find((m) => m.value === x.model)?.label ?? x.model}`}
                   {x.strict === false && t("chat.general")}
                 </p>
@@ -816,10 +848,21 @@ py scripts\\chat-bridge.py              # Windows`}</pre>
           </label>
         </div>
         <div className="chat-composer-foot">
-          <span className="muted">
-            {t("chat.enterHint")}
-            {totals.input > 0 && t("chat.totals", { read: totals.input, written: totals.output })}
-          </span>
+          <span className="muted">{t("chat.enterHint")}</span>
+          {context?.context_tokens ? (
+            <span
+              className={`chat-context${context.context_window && context.context_tokens / context.context_window > 0.8 ? " high" : ""}`}
+              title={t(context.context_estimated ? "chat.contextHintEstimated" : "chat.contextHint")}
+            >
+              {t(context.context_estimated ? "chat.contextEstimated" : "chat.context", { n: num(context.context_tokens) })}
+              {context.context_window ? ` ${t("chat.contextOf", { window: num(context.context_window), pct: String(Math.max(1, Math.round((100 * context.context_tokens) / context.context_window))) })}` : ""}
+              {context.context_window && (
+                <span className="chat-context-bar" aria-hidden="true">
+                  <span style={{ width: `${Math.min(100, (100 * context.context_tokens) / context.context_window)}%` }} />
+                </span>
+              )}
+            </span>
+          ) : null}
           {running ? (
             <button type="button" className="btn btn-danger" onClick={() => abort.current?.abort()}>{t("chat.stop")}</button>
           ) : (

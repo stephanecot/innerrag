@@ -34,8 +34,13 @@ export type BridgeEvent =
       output_tokens: number;
       /** Copilot only: premium requests used. */
       premium_requests?: number | null;
+      /** Size of the agent's context after this answer (the whole conversation so far), when the
+       *  agent reports it (Claude Code); its context window. Absent or null for Copilot. */
+      context_tokens?: number | null;
+      context_window?: number | null;
     }
-  | { type: "error"; message: string };
+  /** `code`: copilot_mcp_blocked when a Copilot policy keeps the knowledge base's MCP server out. */
+  | { type: "error"; message: string; code?: string };
 
 export async function health(bridge: string, signal?: AbortSignal): Promise<BridgeHealth> {
   const res = await fetch(`${bridge}/health`, { signal });

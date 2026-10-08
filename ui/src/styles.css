@@ -493,6 +493,13 @@ pre.code { margin: 0; padding: 14px; background: #1e2a33; color: #e6ebe4; border
 .chat-composer { position: sticky; bottom: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 12px 0 20px; background: linear-gradient(to bottom, transparent, var(--paper) 14px); }
 .chat-composer .textarea { min-height: 64px; resize: none; }
 .chat-composer-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.chat-composer-foot > .muted { flex: 1 1 auto; }
+/* Size of the conversation's context, with a gauge when the window is known. */
+.chat-context { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-variant-numeric: tabular-nums; cursor: help; }
+.chat-context.high { color: var(--warn-ink); font-weight: 600; }
+.chat-context-bar { display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.chat-context-bar > span { display: block; height: 100%; background: var(--c-technology); }
+.chat-context.high .chat-context-bar > span { background: var(--c-event); }
 /* Agent, model and grounding: next to where the question is typed, since they apply to it. */
 .chat-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chat-controls .field-box, .chat-controls .bridge-status { min-height: 38px; font-size: 13.5px; }

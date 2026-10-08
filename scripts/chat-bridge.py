@@ -59,17 +59,37 @@ MAX_MESSAGE = 20_000
 # Text written before `cite_sources` that is at least this long is taken as the answer.
 ANSWER_MIN_CHARS = 160
 
-SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`.
-Call the innerrag tools before answering: search_knowledge first (mode "map" to survey a broad
-question cheaply, then read_passages for the passages you need), explore_entity and
-explore_relation to follow the graph. Always pass session_id "{conversation}" so passages are not
-sent twice. Cite your sources as "document title, page N" when the passage gives a page. Keep
-answers short and structured, in Markdown, in the language of the question. The page renders
-GitHub Markdown (tables, lists, links, images) and, when a picture helps (a flow, a sequence, an
-architecture, a comparison), a diagram in a ```mermaid block (flowchart, sequenceDiagram,
-classDiagram, stateDiagram, erDiagram, gantt…) or a ```svg block (self-contained SVG, viewBox set,
-no script), or a small static mock-up in an ```html block; never describe a diagram without drawing
-it, and keep diagrams faithful to the passages.
+SYSTEM_PROMPT = """You are the assistant of an innerrag knowledge base, project `{project}`. Its users
+need precise and complete answers drawn from their documents (specifications, procedures, reports).
+
+Research thoroughly before answering:
+- call search_knowledge several times when the question has several aspects, with different
+  wordings and the documents' own vocabulary (their language, their terms, requirement ids);
+  mode "map" surveys a broad question cheaply, then read_passages(ids, window 1) reads the useful
+  passages in full, with their neighbours;
+- follow the actors, systems and concepts the passages name with explore_entity and explore_relation;
+- read every passage you rely on in full, not just its first line.
+Always pass session_id "{conversation}": a passage already sent in this conversation comes back
+as "already provided" because it is in your context; if you no longer have its text, read it
+again with read_passages without session_id.
+
+This is one conversation: the earlier questions, answers and passages are in your context. Use
+them, and resolve references ("it", "this rule", "the previous step") with them.
+
+Answer completely and precisely, in Markdown, in the language of the question:
+- give every rule, condition, exception, threshold, value, actor, step and requirement id the
+  passages contain on the subject, not a vague summary of them;
+- structure long answers with headings, numbered steps, and tables to compare options or to list
+  fields, values and statuses;
+- point out what the documents leave open and where they contradict each other;
+- cite the source of each point: "document title, page N", or its section when there are no pages.
+A precise question gets the direct answer first, then its details; a broad one gets a structured
+account of everything the documents say about it.
+The page renders GitHub Markdown (tables, lists, links, images) and, when a picture helps (a flow,
+a sequence, an architecture, a comparison), a diagram in a ```mermaid block (flowchart,
+sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt…) or a ```svg block (self-contained
+SVG, viewBox set, no script), or a small static mock-up in an ```html block; never describe a
+diagram without drawing it, and keep diagrams faithful to the passages.
 {grounding}
 Order of your reply: first write the complete answer for the user as text (that text is all the
 user sees); only then, as your very last action, call cite_sources once with the user's question,
@@ -121,12 +141,39 @@ def allowed_origins(innerrag):
     return out
 
 
-def version_of(executable):
+def launcher(executable):
+    """The command line that starts an agent. On Windows npm installs `claude.cmd` and `copilot.cmd`
+    shims, and running a .cmd goes through cmd.exe, which cuts the command line at the first line
+    break: the multi-line instructions were truncated, and every argument after them (--resume,
+    --disallowedTools, Copilot's question) lost. The program the shim calls is started directly."""
     if not executable:
+        return None
+    path = Path(executable)
+    if os.name != "nt" or path.suffix.lower() not in (".cmd", ".bat"):
+        return [executable]
+    try:
+        script = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [executable]
+    # npm shims end with: "%dp0%\node_modules\<package>\<entry>.exe|.js" %*
+    targets = re.findall(r'"%dp0%\\([^"]+?\.(?:exe|js|cjs|mjs))"', script, re.IGNORECASE)
+    if not targets:
+        return [executable]
+    target = path.parent / targets[-1]
+    if not target.exists():
+        return [executable]
+    if target.suffix.lower() == ".exe":
+        return [str(target)]
+    node = path.parent / "node.exe"
+    return [str(node) if node.exists() else (shutil.which("node") or "node"), str(target)]
+
+
+def version_of(command):
+    if not command:
         return None
     try:
         out = subprocess.run(
-            [executable, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
+            [*command, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
         )
         lines = out.stdout.strip().splitlines()
         return lines[0].strip() if out.returncode == 0 and lines else None
@@ -150,9 +197,9 @@ def find_copilot(name):
 class Bridge:
     def __init__(self, args):
         self.args = args
-        self.claude = shutil.which(args.claude) or args.claude
+        self.claude = launcher(shutil.which(args.claude) or args.claude)
         self.version = version_of(self.claude)
-        self.copilot = find_copilot(args.copilot)
+        self.copilot = launcher(find_copilot(args.copilot))
         self.copilot_version = version_of(self.copilot)
         self.origins = allowed_origins(args.innerrag)
         # A fixed working directory: the agents file their sessions by directory, and resuming
@@ -173,7 +220,7 @@ class Bridge:
     def claude_command(self, project, session, model, strict, conversation):
         mcp = {"mcpServers": {"innerrag": {"type": "http", "url": self.mcp_url(project)}}}
         cmd = [
-            self.claude, "-p",
+            *self.claude, "-p",
             "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--tools", "",
             "--mcp-config", json.dumps(mcp), "--strict-mcp-config",
@@ -194,7 +241,7 @@ class Bridge:
         mcp = {"mcpServers": {"innerrag": {"type": "http", "url": self.mcp_url(project), "tools": ["*"]}}}
         # JSON output is still experimental in Copilot CLI 1.0 and must follow --experimental.
         cmd = [
-            self.copilot, "--experimental", "--output-format", "json",
+            *self.copilot, "--experimental", "--output-format", "json",
             "--additional-mcp-config", json.dumps(mcp),
             # Only innerrag's tools are visible to the model: no shell, no file, no web.
             "--available-tools", ",".join(f"innerrag-{t}" for t in self.tools),
@@ -278,6 +325,11 @@ def translate_claude(event, state):
     elif kind == "result":
         yield from held_answer(state)
         usage = event.get("usage", {})
+        # The context the model holds now: everything the last call of the run read and wrote
+        # (the conversation so far, the instructions, the tools, the passages).
+        last = (usage.get("iterations") or [usage])[-1]
+        context = sum(last.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
+        windows = [m.get("contextWindow") for m in (event.get("modelUsage") or {}).values() if isinstance(m, dict) and m.get("contextWindow")]
         yield {
             "type": "done",
             "ok": not event.get("is_error") and event.get("subtype") == "success",
@@ -289,6 +341,8 @@ def translate_claude(event, state):
             "input_tokens": (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0)
             + (usage.get("cache_read_input_tokens") or 0),
             "output_tokens": usage.get("output_tokens") or 0,
+            "context_tokens": context or None,
+            "context_window": max(windows) if windows else None,
         }
 
 
@@ -315,6 +369,13 @@ def translate_copilot(event, state):
         yield {"type": "tool_result", "id": data.get("toolCallId"), "text": str(text), "is_error": not data.get("success", True)}
     elif kind == "session.error":
         state["error"] = data.get("message") or "Copilot error"
+    elif kind == "session.warning" and data.get("warningType") == "mcp" and "innerrag" in str(data.get("message", "")):
+        # An organization policy that blocks MCP servers leaves Copilot without the knowledge base:
+        # it would answer that the documents say nothing. Stop before the model is called.
+        state["blocked"] = True
+        yield {"type": "error", "code": "copilot_mcp_blocked",
+               "message": f"GitHub Copilot: {data.get('message')}. Your organization's Copilot policy does not allow "
+                          "this MCP server; ask its administrators to allow it, or use Claude Code."}
     elif kind == "result":
         yield from held_answer(state)
         usage = event.get("usage") or {}
@@ -329,6 +390,8 @@ def translate_copilot(event, state):
             "input_tokens": 0,
             "output_tokens": state.get("output_tokens", 0),
             "premium_requests": usage.get("premiumRequests"),
+            "context_tokens": None,
+            "context_window": None,
         }
 
 
@@ -459,8 +522,11 @@ class Handler(BaseHTTPRequestHandler):
                 except json.JSONDecodeError:
                     continue
                 for out in translate(event, state):
-                    state["done"] |= out["type"] == "done"
+                    state["done"] |= out["type"] in ("done", "error")
                     self.send(out)
+                # A blocking error (Copilot without the knowledge base): stop the agent now.
+                if state.get("blocked"):
+                    break
             proc.wait()
             if not state["done"]:
                 detail = state.get("error") or "".join(errors).strip()[-800:] or f"{agent} exited with code {proc.returncode}"
@@ -505,7 +571,7 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"innerrag chat bridge on http://127.0.0.1:{args.port}")
     print(f"  Claude Code: {bridge.version or 'not found'}")
-    print(f"  GitHub Copilot CLI: {bridge.copilot_version or 'not found'}" + (f" ({bridge.copilot})" if bridge.copilot_version else ""))
+    print(f"  GitHub Copilot CLI: {bridge.copilot_version or 'not found'}" + (f" ({' '.join(bridge.copilot)})" if bridge.copilot_version else ""))
     print(f"  innerrag at {args.innerrag}")
     print(f"  pages allowed: {', '.join(sorted(bridge.origins))}")
     print("  Ctrl+C to stop")
