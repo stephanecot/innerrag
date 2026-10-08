@@ -20,6 +20,30 @@ services:
       # INNERRAG_NER_LABELS: person,organization,location,event,product,technology
     restart: unless-stopped
 
+  # Development: the server runs from ./src and is rebuilt and restarted on every change (cargo watch).
+  #   docker compose --profile dev up -d innerrag-dev      (first start: a few minutes of compilation)
+  #   docker compose logs -f innerrag-dev                  (compilation and server logs)
+  #   cd ui && npm run dev                                 (UI with hot reload on http://localhost:5173)
+  # It uses ./data like the image: stop the `innerrag` service first, a database opens in one process only.
+  innerrag-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: dev
+    image: innerrag:dev
+    ports:
+      # The port Vite's proxy and the chat bridge look for in development.
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - .:/src
+      - ./data:/data
+      # Build cache in volumes: fast, and kept across restarts.
+      - cargo-target:/cargo-target
+      - cargo-registry:/usr/local/cargo/registry
+      # - ./mon-depot/docs:/watch/mon-depot-docs:ro
+    environment:
+      INNERRAG_USER: ${INNERRAG_USER:-local}
+
   # NVIDIA GPU variant: docker compose --profile gpu up -d innerrag-gpu
   # (needs the NVIDIA Container Toolkit on a Linux or Windows/WSL2 host; not available on macOS)
   innerrag-gpu:
@@ -44,3 +68,7 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
+
+volumes:
+  cargo-target:
+  cargo-registry:

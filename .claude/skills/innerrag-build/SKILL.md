@@ -83,7 +83,12 @@ The UI is compiled into the image: after changing `ui/`, rebuild and recreate th
 - **Another architecture**: `--platform amd64|arm64` (emulated, slow). `--platform all --push --tag
   registry/innerrag:x` builds a multi-arch image; Docker buildx only (with Podman, build each one).
 - **Offline transfer**: `--save innerrag.tar` / `-Save innerrag.tar`, then `docker load -i innerrag.tar`.
-- **UI development**: `cd ui && npm install && npm run dev` (port 5173, proxied to a server on :18080).
+- **Live development**: `docker compose stop innerrag`, `docker compose --profile dev up -d innerrag-dev`
+  (server from the mounted `src/`, rebuilt and restarted by `cargo watch --poll` on :18080; the first
+  start compiles the dependencies for several minutes), then `cd ui && npm install && npm run dev`
+  (http://localhost:5173, hot reload, proxied to :18080). Only one of `innerrag` / `innerrag-dev` may
+  use `./data` at a time. With Podman without compose, the same `podman run` with `-v .:/src`,
+  `-v cargo-target:/cargo-target`, `-v cargo-registry:/usr/local/cargo/registry` and image target `dev`.
 
 ## 5. Troubleshooting
 

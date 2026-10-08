@@ -165,7 +165,28 @@ server address different from the page's (see `--innerrag`).
 
 The interface is compiled into the image: a change to `ui/` only shows after a rebuild.
 
-## 7. Troubleshooting
+## 7. Working on the code (live reload)
+
+For development, run the server from the sources and the interface with Vite: every change shows up
+without rebuilding the image.
+
+```bash
+docker compose stop innerrag                       # a database opens in one process only
+docker compose --profile dev up -d innerrag-dev    # server from ./src on :18080, rebuilt on every change
+docker compose logs -f innerrag-dev                # compilation and server logs
+cd ui && npm install && npm run dev                # interface on http://localhost:5173, hot reload
+```
+
+- **Server**: `cargo watch` recompiles and restarts it when `src/`, `Cargo.toml` or `build.rs` change.
+  The first start compiles every dependency (several minutes); after that, only innerrag itself
+  (seconds). The build cache lives in Docker volumes and survives restarts.
+- **Interface**: Vite reloads the page as soon as a file of `ui/` is saved, and proxies `/api` and
+  `/mcp` to `:18080` (`INNERRAG_DEV_SERVER=http://localhost:8080` points it at the image instead).
+- **Assistant**: start the bridge once the dev server answers; it finds it on `:18080` by itself.
+- **Watched folders**: add their `/watch/...` mount to the `innerrag-dev` service too.
+- Back to the image: `docker compose --profile dev stop innerrag-dev`, then `docker compose start innerrag`.
+
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|

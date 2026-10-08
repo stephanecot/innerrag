@@ -68,7 +68,7 @@ RUN set -eux; \
 
 # ---- Rust server ------------------------------------------------------------
 # trixie: LadybugDB headers need GCC >= 13 (<format>).
-FROM rust:1-trixie AS builder
+FROM rust:1-trixie AS rust-base
 RUN apt-get update && apt-get install -y --no-install-recommends cmake libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 ENV LBUG_VERSION=0.21.2
@@ -79,6 +79,8 @@ ENV ORT_LIB_LOCATION=/nonexistent
 COPY certs/ /usr/local/share/ca-certificates/extra/
 RUN update-ca-certificates
 WORKDIR /src
+
+FROM rust-base AS builder
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -122,6 +124,22 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
     CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 ENTRYPOINT ["innerrag"]
 CMD ["serve"]
+
+# ---- Development: the server rebuilt and restarted on every change -----------
+# docker compose --profile dev up -d innerrag-dev   (see docker-compose.yml: sources mounted on /src)
+# The UI is served by Vite on the host (cd ui && npm run dev), which proxies /api and /mcp here.
+FROM rust-base AS dev
+ARG EMBED_REPO EMBED_FILE NER_REPO NER_FILE RERANK_REPO RERANK_FILE
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils catdoc     && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install cargo-watch --locked
+COPY --from=models /ort/libonnxruntime.so /usr/local/lib/libonnxruntime.so
+COPY --from=models /models /models
+# The LadybugDB vector extension, already fetched by the runtime stage.
+COPY --from=runtime /home/app/.lbdb /root/.lbdb
+ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so     CARGO_TARGET_DIR=/cargo-target     INNERRAG_BIND=0.0.0.0:8080     INNERRAG_DATA=/data     INNERRAG_MODELS=/models     INNERRAG_EMBED_MODEL="${EMBED_REPO}/${EMBED_FILE}"     INNERRAG_NER_MODEL="${NER_REPO}/${NER_FILE}"     INNERRAG_RERANK_MODEL="${RERANK_REPO}"
+EXPOSE 8080
+# --poll: file events do not cross a bind mount from a Windows or macOS host into the engine's VM.
+CMD ["cargo", "watch", "--poll", "-w", "src", "-w", "Cargo.toml", "-w", "build.rs", "-x", "run -- serve"]
 
 # ---- GPU runtime (NVIDIA CUDA) -----------------------------------------------
 # docker build --target runtime-cuda --platform linux/amd64 -t innerrag:cuda .

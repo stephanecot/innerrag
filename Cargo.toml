@@ -34,3 +34,11 @@ ureq = "2"
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+# Development server (Dockerfile target `dev`, cargo watch): dependencies optimized once, so the
+# models' tokenizers and the graph code run at speed, while innerrag itself recompiles quickly.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -331,9 +331,11 @@ The PDF always has the same layout: header (project, repository, commit, specifi
 Rust is not required on the machine: everything compiles in a container. The container uses Debian trixie with GCC 14, which LadybugDB's C++20 headers need.
 
 ```bash
-docker build --target models -t innerrag-models .           # models, once
-cd ui && npm install && npm run dev                          # UI on :5173, proxied to :18080
+docker compose --profile dev up -d innerrag-dev    # server from ./src on :18080, rebuilt on every change (cargo watch)
+cd ui && npm install && npm run dev                # UI on :5173 with hot reload, proxied to :18080
 ```
+
+Stop the `innerrag` service first: both use `./data`, and a database opens in one process only. See [GETTING_STARTED.md](GETTING_STARTED.md#7-working-on-the-code-live-reload).
 
 Code layout:
 
